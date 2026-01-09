@@ -307,11 +307,7 @@ static const int kSamplesThreshold = 10;
     // audio level metering through MTAudioProcessingTap
     
     static float smoothedVolume = 50;
-    static CFTimeInterval lastAnalysisTime = 0;
     static int consecutiveLowSamples = 0;
-    
-    CFTimeInterval currentTime = CACurrentMediaTime();
-    lastAnalysisTime = currentTime;
     
     // Check playback position to detect potential silence at video boundaries
     CMTime currentPlayTime = _currentPlayer.currentTime;
