@@ -2,18 +2,8 @@
 #import <AVFoundation/AVFoundation.h>
 #import <UIKit/UIKit.h>
 
-#if __has_include(<YTVideoOverlay/Header.h>)
 #import <YTVideoOverlay/Header.h>
 #import <YTVideoOverlay/Init.x>
-#define YSS_HAS_YTVIDEOOVERLAY 1
-#else
-#define YSS_HAS_YTVIDEOOVERLAY 0
-extern NSString *AccessibilityLabelKey __attribute__((weak_import));
-extern NSString *SelectorKey __attribute__((weak_import));
-extern NSString *UpdateImageOnVisibleKey __attribute__((weak_import));
-extern NSString *ExtraBooleanKeys __attribute__((weak_import));
-extern void initYTVideoOverlay(NSString *tweakKey, NSDictionary *settings) __attribute__((weak_import));
-#endif
 #import <YouTubeHeader/YTColor.h>
 #import <YouTubeHeader/QTMIcon.h>
 #import <YouTubeHeader/YTMainAppVideoPlayerOverlayViewController.h>
@@ -39,10 +29,6 @@ static const float kDefaultPlaybackSpeed = 1.1f;
 static const float kDefaultSilenceSpeed = 2.0f;
 static const float kDefaultSilenceThreshold = 30.0f;
 static const int kSamplesThreshold = 10;
-
-static NSString *YSSOverlayKey(NSString *key, NSString *fallback) {
-    return key ?: fallback;
-}
 
 // Forward declarations
 @class YouSkipSilenceManager;
@@ -963,14 +949,12 @@ static NSArray *addTimeSavedItemsToSettings(NSArray *items, YTSettingsViewContro
     // Initialize the manager
     [YouSkipSilenceManager sharedManager];
     
-    if (initYTVideoOverlay) {
-        initYTVideoOverlay(TweakKey, @{
-            YSSOverlayKey(AccessibilityLabelKey, @"AccessibilityLabel"): @"Skip Silence",
-            YSSOverlayKey(SelectorKey, @"Selector"): @"didPressYouSkipSilence:",
-            YSSOverlayKey(UpdateImageOnVisibleKey, @"UpdateImageOnVisible"): @YES, // Update image when button becomes visible
-            YSSOverlayKey(ExtraBooleanKeys, @"ExtraBooleanKeys"): @[DynamicThresholdKey],
-        });
-    }
+    initYTVideoOverlay(TweakKey, @{
+        AccessibilityLabelKey: @"Skip Silence",
+        SelectorKey: @"didPressYouSkipSilence:",
+        UpdateImageOnVisibleKey: @YES, // Update image when button becomes visible
+        ExtraBooleanKeys: @[DynamicThresholdKey],
+    });
     %init(Main);
     %init(Top);
     %init(Bottom);
