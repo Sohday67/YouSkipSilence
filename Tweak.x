@@ -2,8 +2,23 @@
 #import <AVFoundation/AVFoundation.h>
 #import <UIKit/UIKit.h>
 
+#if __has_include(<YTVideoOverlay/Header.h>)
 #import <YTVideoOverlay/Header.h>
+#else
+static NSString *const AccessibilityLabelKey = @"AccessibilityLabelKey";
+static NSString *const SelectorKey = @"SelectorKey";
+static NSString *const UpdateImageOnVisibleKey = @"UpdateImageOnVisibleKey";
+static NSString *const ExtraBooleanKeys = @"ExtraBooleanKeys";
+#endif
+
+#if __has_include(<YTVideoOverlay/Init.x>)
 #import <YTVideoOverlay/Init.x>
+#else
+static inline void initYTVideoOverlay(NSString *tweakKey, NSDictionary *options) {
+    (void)tweakKey;
+    (void)options;
+}
+#endif
 #import <YouTubeHeader/YTColor.h>
 #import <YouTubeHeader/QTMIcon.h>
 #import <YouTubeHeader/YTMainAppVideoPlayerOverlayViewController.h>
