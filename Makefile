@@ -12,14 +12,14 @@ YouSkipSilence_FILES = Tweak.xm \
 	YSSPreferences.m
 YouSkipSilence_CFLAGS = -fobjc-arc
 YouSkipSilence_FRAMEWORKS = UIKit AVFoundation MediaToolbox
-YouSkipSilence_LIBRARIES = cephei
+YouSkipSilence_LIBRARIES =
 
 BUNDLE_NAME = YouSkipSilencePrefs
 YouSkipSilencePrefs_FILES = Preferences/YSSRootListController.m
 YouSkipSilencePrefs_INSTALL_PATH = /Library/PreferenceBundles
 YouSkipSilencePrefs_FRAMEWORKS = UIKit
 YouSkipSilencePrefs_PRIVATE_FRAMEWORKS = Preferences
-YouSkipSilencePrefs_LIBRARIES = cepheiprefs
+YouSkipSilencePrefs_LIBRARIES =
 YouSkipSilencePrefs_CFLAGS = -fobjc-arc
 
 include $(THEOS)/makefiles/common.mk

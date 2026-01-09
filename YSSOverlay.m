@@ -2,7 +2,7 @@
 #import "YSSPreferences.h"
 #import "YSSAudioTap.h"
 #import <UIKit/UIKit.h>
-#import <Cephei/HBPreferences.h>
+#import <CoreFoundation/CoreFoundation.h>
 
 @interface YSSOverlay ()
 @property (nonatomic, strong) UIButton *toggleButton;
@@ -79,8 +79,14 @@
 - (void)toggleTapped {
     YSSPreferences *prefs = [YSSPreferences shared];
     prefs.enabled = !prefs.enabled;
-    HBPreferences *hbPrefs = [[HBPreferences alloc] initWithIdentifier:kYSSPrefsIdentifier];
-    [hbPrefs setBool:prefs.enabled forKey:kYSSEnabledKey];
+    NSUserDefaults *defaults = [[NSUserDefaults alloc] initWithSuiteName:kYSSPrefsIdentifier];
+    [defaults setBool:prefs.enabled forKey:kYSSEnabledKey];
+    [defaults synchronize];
+    CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
+                                         (__bridge CFStringRef)kYSSPrefsChangedNotification,
+                                         NULL,
+                                         NULL,
+                                         true);
     [self updateButtonState];
     [[YSSAudioTap shared] updatePlaybackRateIfNeeded];
 }
@@ -177,16 +183,28 @@
 - (void)updatePlaybackSpeed:(float)value {
     YSSPreferences *prefs = [YSSPreferences shared];
     prefs.playbackSpeed = value;
-    HBPreferences *hbPrefs = [[HBPreferences alloc] initWithIdentifier:kYSSPrefsIdentifier];
-    [hbPrefs setObject:@(value) forKey:kYSSPlaybackSpeedKey];
+    NSUserDefaults *defaults = [[NSUserDefaults alloc] initWithSuiteName:kYSSPrefsIdentifier];
+    [defaults setObject:@(value) forKey:kYSSPlaybackSpeedKey];
+    [defaults synchronize];
+    CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
+                                         (__bridge CFStringRef)kYSSPrefsChangedNotification,
+                                         NULL,
+                                         NULL,
+                                         true);
     [[YSSAudioTap shared] updatePlaybackRateIfNeeded];
 }
 
 - (void)updateSilenceSpeed:(float)value {
     YSSPreferences *prefs = [YSSPreferences shared];
     prefs.silenceSpeed = value;
-    HBPreferences *hbPrefs = [[HBPreferences alloc] initWithIdentifier:kYSSPrefsIdentifier];
-    [hbPrefs setObject:@(value) forKey:kYSSSilenceSpeedKey];
+    NSUserDefaults *defaults = [[NSUserDefaults alloc] initWithSuiteName:kYSSPrefsIdentifier];
+    [defaults setObject:@(value) forKey:kYSSSilenceSpeedKey];
+    [defaults synchronize];
+    CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
+                                         (__bridge CFStringRef)kYSSPrefsChangedNotification,
+                                         NULL,
+                                         NULL,
+                                         true);
     [[YSSAudioTap shared] updatePlaybackRateIfNeeded];
 }
 

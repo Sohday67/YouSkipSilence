@@ -10,6 +10,7 @@ extern NSString *const kYSSSilenceSpeedKey;
 extern NSString *const kYSSTotalSavedKey;
 extern NSString *const kYSSLastVideoSavedKey;
 extern NSString *const kYSSPrefsIdentifier;
+extern NSString *const kYSSPrefsChangedNotification;
 
 @interface YSSPreferences : NSObject
 

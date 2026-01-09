@@ -1,6 +1,6 @@
 #import "YSSRootListController.h"
 #import "../YSSPreferences.h"
-#import <Cephei/HBPreferences.h>
+#import <CoreFoundation/CoreFoundation.h>
 
 @implementation YSSRootListController
 
@@ -12,18 +12,24 @@
 }
 
 - (id)readPreferenceValue:(PSSpecifier *)specifier {
-    HBPreferences *prefs = [[HBPreferences alloc] initWithIdentifier:kYSSPrefsIdentifier];
-    return [prefs objectForKey:specifier.properties[@"key"]] ?: specifier.properties[@"default"];
+    NSUserDefaults *defaults = [[NSUserDefaults alloc] initWithSuiteName:kYSSPrefsIdentifier];
+    id value = [defaults objectForKey:specifier.properties[@"key"]];
+    return value ?: specifier.properties[@"default"];
 }
 
 - (void)setPreferenceValue:(id)value specifier:(PSSpecifier *)specifier {
-    HBPreferences *prefs = [[HBPreferences alloc] initWithIdentifier:kYSSPrefsIdentifier];
-    [prefs setObject:value forKey:specifier.properties[@"key"]];
+    NSUserDefaults *defaults = [[NSUserDefaults alloc] initWithSuiteName:kYSSPrefsIdentifier];
+    [defaults setObject:value forKey:specifier.properties[@"key"]];
+    [defaults synchronize];
     if ([specifier.properties[@"key"] isEqualToString:kYSSTotalSavedKey] ||
         [specifier.properties[@"key"] isEqualToString:kYSSLastVideoSavedKey]) {
         return;
     }
-    [[NSNotificationCenter defaultCenter] postNotificationName:@"YouSkipSilencePreferencesChanged" object:nil];
+    CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
+                                         (__bridge CFStringRef)kYSSPrefsChangedNotification,
+                                         NULL,
+                                         NULL,
+                                         true);
 }
 
 - (NSString *)formatSeconds:(double)seconds {
@@ -37,21 +43,27 @@
 }
 
 - (NSString *)getTotalSaved:(PSSpecifier *)specifier {
-    HBPreferences *prefs = [[HBPreferences alloc] initWithIdentifier:kYSSPrefsIdentifier];
-    double value = [[prefs objectForKey:kYSSTotalSavedKey] doubleValue];
+    NSUserDefaults *defaults = [[NSUserDefaults alloc] initWithSuiteName:kYSSPrefsIdentifier];
+    double value = [[defaults objectForKey:kYSSTotalSavedKey] doubleValue];
     return [self formatSeconds:value];
 }
 
 - (NSString *)getLastSaved:(PSSpecifier *)specifier {
-    HBPreferences *prefs = [[HBPreferences alloc] initWithIdentifier:kYSSPrefsIdentifier];
-    double value = [[prefs objectForKey:kYSSLastVideoSavedKey] doubleValue];
+    NSUserDefaults *defaults = [[NSUserDefaults alloc] initWithSuiteName:kYSSPrefsIdentifier];
+    double value = [[defaults objectForKey:kYSSLastVideoSavedKey] doubleValue];
     return [self formatSeconds:value];
 }
 
 - (void)resetStatistics:(PSSpecifier *)specifier {
-    HBPreferences *prefs = [[HBPreferences alloc] initWithIdentifier:kYSSPrefsIdentifier];
-    [prefs setObject:@0.0 forKey:kYSSTotalSavedKey];
-    [prefs setObject:@0.0 forKey:kYSSLastVideoSavedKey];
+    NSUserDefaults *defaults = [[NSUserDefaults alloc] initWithSuiteName:kYSSPrefsIdentifier];
+    [defaults setObject:@0.0 forKey:kYSSTotalSavedKey];
+    [defaults setObject:@0.0 forKey:kYSSLastVideoSavedKey];
+    [defaults synchronize];
+    CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
+                                         (__bridge CFStringRef)kYSSPrefsChangedNotification,
+                                         NULL,
+                                         NULL,
+                                         true);
     [self reloadSpecifiers];
 }
 

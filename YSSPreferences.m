@@ -1,6 +1,4 @@
 #import "YSSPreferences.h"
-#import <Cephei/HBPreferences.h>
-
 NSString *const kYSSEnabledKey = @"Enabled";
 NSString *const kYSSDynamicThresholdKey = @"DynamicThreshold";
 NSString *const kYSSFixedThresholdKey = @"FixedThreshold";
@@ -9,14 +7,11 @@ NSString *const kYSSSilenceSpeedKey = @"SilenceSpeed";
 NSString *const kYSSTotalSavedKey = @"TotalSaved";
 NSString *const kYSSLastVideoSavedKey = @"LastVideoSaved";
 NSString *const kYSSPrefsIdentifier = @"com.yours.you-skipsilence";
+NSString *const kYSSPrefsChangedNotification = @"com.yours.you-skipsilence/changed";
 
 static const float kYSSDefaultFixedThreshold = 0.02f;
 static const float kYSSDefaultPlaybackSpeed = 1.1f;
 static const float kYSSDefaultSilenceSpeed = 2.0f;
-
-@interface YSSPreferences ()
-@property (nonatomic, strong) HBPreferences *preferences;
-@end
 
 @implementation YSSPreferences
 
@@ -32,8 +27,8 @@ static const float kYSSDefaultSilenceSpeed = 2.0f;
 - (instancetype)init {
     self = [super init];
     if (self) {
-        _preferences = [[HBPreferences alloc] initWithIdentifier:kYSSPrefsIdentifier];
-        [_preferences registerDefaults:@{
+        NSUserDefaults *defaults = [[NSUserDefaults alloc] initWithSuiteName:kYSSPrefsIdentifier];
+        NSDictionary *registration = @{
             kYSSEnabledKey: @YES,
             kYSSDynamicThresholdKey: @YES,
             kYSSFixedThresholdKey: @(kYSSDefaultFixedThreshold),
@@ -41,30 +36,36 @@ static const float kYSSDefaultSilenceSpeed = 2.0f;
             kYSSSilenceSpeedKey: @(kYSSDefaultSilenceSpeed),
             kYSSTotalSavedKey: @0.0,
             kYSSLastVideoSavedKey: @0.0
-        }];
+        };
+        [defaults registerDefaults:registration];
         [self reload];
     }
     return self;
 }
 
 - (void)reload {
-    self.enabled = [self.preferences boolForKey:kYSSEnabledKey];
-    self.dynamicThreshold = [self.preferences boolForKey:kYSSDynamicThresholdKey];
-    self.fixedThreshold = [[self.preferences objectForKey:kYSSFixedThresholdKey] floatValue];
-    self.playbackSpeed = [[self.preferences objectForKey:kYSSPlaybackSpeedKey] floatValue];
-    self.silenceSpeed = [[self.preferences objectForKey:kYSSSilenceSpeedKey] floatValue];
-    self.totalSaved = [[self.preferences objectForKey:kYSSTotalSavedKey] doubleValue];
-    self.lastVideoSaved = [[self.preferences objectForKey:kYSSLastVideoSavedKey] doubleValue];
+    NSUserDefaults *defaults = [[NSUserDefaults alloc] initWithSuiteName:kYSSPrefsIdentifier];
+    self.enabled = [defaults boolForKey:kYSSEnabledKey];
+    self.dynamicThreshold = [defaults boolForKey:kYSSDynamicThresholdKey];
+    self.fixedThreshold = [[defaults objectForKey:kYSSFixedThresholdKey] floatValue];
+    self.playbackSpeed = [[defaults objectForKey:kYSSPlaybackSpeedKey] floatValue];
+    self.silenceSpeed = [[defaults objectForKey:kYSSSilenceSpeedKey] floatValue];
+    self.totalSaved = [[defaults objectForKey:kYSSTotalSavedKey] doubleValue];
+    self.lastVideoSaved = [[defaults objectForKey:kYSSLastVideoSavedKey] doubleValue];
 }
 
 - (void)saveStatistics {
-    [self.preferences setObject:@(self.totalSaved) forKey:kYSSTotalSavedKey];
-    [self.preferences setObject:@(self.lastVideoSaved) forKey:kYSSLastVideoSavedKey];
+    NSUserDefaults *defaults = [[NSUserDefaults alloc] initWithSuiteName:kYSSPrefsIdentifier];
+    [defaults setObject:@(self.totalSaved) forKey:kYSSTotalSavedKey];
+    [defaults setObject:@(self.lastVideoSaved) forKey:kYSSLastVideoSavedKey];
+    [defaults synchronize];
 }
 
 - (void)resetLastVideoStatistics {
     self.lastVideoSaved = 0.0;
-    [self.preferences setObject:@(self.lastVideoSaved) forKey:kYSSLastVideoSavedKey];
+    NSUserDefaults *defaults = [[NSUserDefaults alloc] initWithSuiteName:kYSSPrefsIdentifier];
+    [defaults setObject:@(self.lastVideoSaved) forKey:kYSSLastVideoSavedKey];
+    [defaults synchronize];
 }
 
 - (void)resetAllStatistics {

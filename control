@@ -6,4 +6,4 @@ Description: Automatically speeds up silent parts of YouTube videos.
 Maintainer: You
 Author: You
 Section: Tweaks
-Depends: mobilesubstrate, preferenceloader, ws.hbang.common, com.tonwalter888.ytliteplusextra, com.poomsmart.ytvideooverlay
+Depends: mobilesubstrate, preferenceloader, com.tonwalter888.ytliteplusextra, com.poomsmart.ytvideooverlay
