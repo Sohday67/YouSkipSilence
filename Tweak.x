@@ -1,20 +1,24 @@
 #import <Foundation/Foundation.h>
 #import <AVFoundation/AVFoundation.h>
 #import <UIKit/UIKit.h>
+#import <MediaToolbox/MTAudioProcessingTap.h>
+#import <rootless.h>
 
-#import <YTVideoOverlay/Header.h>
-#import <YTVideoOverlay/Init.x>
 #import <YouTubeHeader/YTColor.h>
 #import <YouTubeHeader/QTMIcon.h>
 #import <YouTubeHeader/YTMainAppVideoPlayerOverlayViewController.h>
 #import <YouTubeHeader/YTMainAppVideoPlayerOverlayView.h>
 #import <YouTubeHeader/YTMainAppControlsOverlayView.h>
+#import <YouTubeHeader/YTInlinePlayerBarContainerView.h>
 #import <YouTubeHeader/YTPlayerViewController.h>
 #import <YouTubeHeader/GOOHUDManagerInternal.h>
 #import <YouTubeHeader/YTHUDMessage.h>
 #import <YouTubeHeader/YTSettingsSectionItem.h>
 #import <YouTubeHeader/YTSettingsSectionItemManager.h>
 #import <YouTubeHeader/YTSettingsViewController.h>
+
+#import <YTVideoOverlay/Header.h>
+#import <YTVideoOverlay/Init.x>
 
 #define TweakKey @"YouSkipSilence"
 #define DynamicThresholdKey @"YouSkipSilence-DynamicThreshold"
@@ -52,6 +56,7 @@ static const int kSamplesThreshold = 10;
 
 @interface YTMainAppControlsOverlayView (YouSkipSilence)
 @property (nonatomic, assign) YTPlayerViewController *playerViewController;
+@property (retain, nonatomic) NSMutableDictionary *overlayButtons;
 - (void)didPressYouSkipSilence:(id)arg;
 - (void)didLongPressYouSkipSilence:(UILongPressGestureRecognizer *)gesture;
 @end
@@ -61,6 +66,7 @@ static const int kSamplesThreshold = 10;
 
 @interface YTInlinePlayerBarContainerView (YouSkipSilence)
 @property (nonatomic, strong) YTInlinePlayerBarController *delegate;
+@property (retain, nonatomic) NSMutableDictionary *overlayButtons;
 - (void)didPressYouSkipSilence:(id)arg;
 - (void)didLongPressYouSkipSilence:(UILongPressGestureRecognizer *)gesture;
 @end
@@ -80,7 +86,7 @@ static const int kSamplesThreshold = 10;
 @property (nonatomic, weak) AVPlayer *currentPlayer;
 @property (nonatomic, strong) NSTimer *analysisTimer;
 @property (nonatomic, strong) AVAudioMix *audioMix;
-@property (nonatomic, strong) MTAudioProcessingTap *audioTap;
+@property (nonatomic, assign) MTAudioProcessingTapRef audioTap;
 @property (nonatomic, assign) float currentVolume;
 @property (nonatomic, assign) NSTimeInterval totalTimeSaved;
 @property (nonatomic, assign) NSTimeInterval lastVideoTimeSaved;
@@ -305,7 +311,6 @@ static const int kSamplesThreshold = 10;
     static int consecutiveLowSamples = 0;
     
     CFTimeInterval currentTime = CACurrentMediaTime();
-    CFTimeInterval timeDelta = currentTime - lastAnalysisTime;
     lastAnalysisTime = currentTime;
     
     // Check playback position to detect potential silence at video boundaries
