@@ -374,9 +374,14 @@ static const int kSamplesThreshold = 10;
     // Calculate time saved during this sped-up period
     if (_isSpedUp && _lastSpeedUpTime > 0) {
         CFTimeInterval spedUpDuration = CACurrentMediaTime() - _lastSpeedUpTime;
-        // Time saved = actual duration - (actual duration / silence speed)
-        // At 2x speed, 10 seconds of real time covers 20 seconds of video
-        // So time saved = 10 - (10 / 2) = 10 - 5 = 5 seconds saved
+        // Time saved calculation:
+        // At 2x speed, in 10 seconds of real time we cover 20 seconds of video content
+        // Without skip silence, that 20 seconds of content would take 20 seconds
+        // With skip silence at 2x, it takes 10 seconds, saving us 10 seconds
+        // Formula: timeSaved = videoContentDuration - realTimeDuration
+        //        = (realTime * speed) - realTime = realTime * (speed - 1)
+        // But we want time saved relative to normal playback, so:
+        // timeSaved = realTime - (realTime / speed) = realTime * (1 - 1/speed)
         NSTimeInterval timeSaved = spedUpDuration * (1.0f - 1.0f / _silenceSpeed);
         if (timeSaved > 0) {
             _currentVideoTimeSaved += timeSaved;
