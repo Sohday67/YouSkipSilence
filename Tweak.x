@@ -5,26 +5,14 @@
 #if __has_include(<YTVideoOverlay/Header.h>)
 #import <YTVideoOverlay/Header.h>
 #import <YTVideoOverlay/Init.x>
+#define YSS_HAS_YTVIDEOOVERLAY 1
 #else
-#import <dlfcn.h>
-
-static NSString *const AccessibilityLabelKey = @"AccessibilityLabelKey";
-static NSString *const SelectorKey = @"SelectorKey";
-static NSString *const UpdateImageOnVisibleKey = @"UpdateImageOnVisibleKey";
-static NSString *const ExtraBooleanKeys = @"ExtraBooleanKeys";
-
-typedef void (*YTVideoOverlayInitFunc)(NSString *key, NSDictionary *configuration);
-
-static inline void initYTVideoOverlay(NSString *key, NSDictionary *configuration) {
-    static YTVideoOverlayInitFunc initFunction = NULL;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
-        initFunction = (YTVideoOverlayInitFunc)dlsym(RTLD_DEFAULT, "initYTVideoOverlay");
-    });
-    if (initFunction) {
-        initFunction(key, configuration);
-    }
-}
+#define YSS_HAS_YTVIDEOOVERLAY 0
+extern NSString *AccessibilityLabelKey __attribute__((weak_import));
+extern NSString *SelectorKey __attribute__((weak_import));
+extern NSString *UpdateImageOnVisibleKey __attribute__((weak_import));
+extern NSString *ExtraBooleanKeys __attribute__((weak_import));
+extern void initYTVideoOverlay(NSString *tweakKey, NSDictionary *settings) __attribute__((weak_import));
 #endif
 #import <YouTubeHeader/YTColor.h>
 #import <YouTubeHeader/QTMIcon.h>
@@ -51,6 +39,10 @@ static const float kDefaultPlaybackSpeed = 1.1f;
 static const float kDefaultSilenceSpeed = 2.0f;
 static const float kDefaultSilenceThreshold = 30.0f;
 static const int kSamplesThreshold = 10;
+
+static NSString *YSSOverlayKey(NSString *key, NSString *fallback) {
+    return key ?: fallback;
+}
 
 // Forward declarations
 @class YouSkipSilenceManager;
@@ -971,12 +963,14 @@ static NSArray *addTimeSavedItemsToSettings(NSArray *items, YTSettingsViewContro
     // Initialize the manager
     [YouSkipSilenceManager sharedManager];
     
-    initYTVideoOverlay(TweakKey, @{
-        AccessibilityLabelKey: @"Skip Silence",
-        SelectorKey: @"didPressYouSkipSilence:",
-        UpdateImageOnVisibleKey: @YES, // Update image when button becomes visible
-        ExtraBooleanKeys: @[DynamicThresholdKey],
-    });
+    if (initYTVideoOverlay) {
+        initYTVideoOverlay(TweakKey, @{
+            YSSOverlayKey(AccessibilityLabelKey, @"AccessibilityLabel"): @"Skip Silence",
+            YSSOverlayKey(SelectorKey, @"Selector"): @"didPressYouSkipSilence:",
+            YSSOverlayKey(UpdateImageOnVisibleKey, @"UpdateImageOnVisible"): @YES, // Update image when button becomes visible
+            YSSOverlayKey(ExtraBooleanKeys, @"ExtraBooleanKeys"): @[DynamicThresholdKey],
+        });
+    }
     %init(Main);
     %init(Top);
     %init(Bottom);
