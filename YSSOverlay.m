@@ -42,6 +42,24 @@
     }
 }
 
+- (UIWindow *)currentKeyWindow {
+    for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
+        if (scene.activationState != UISceneActivationStateForegroundActive) {
+            continue;
+        }
+        if (![scene isKindOfClass:[UIWindowScene class]]) {
+            continue;
+        }
+        UIWindowScene *windowScene = (UIWindowScene *)scene;
+        for (UIWindow *window in windowScene.windows) {
+            if (window.isKeyWindow) {
+                return window;
+            }
+        }
+    }
+    return [UIApplication sharedApplication].windows.firstObject;
+}
+
 - (UIView *)resolveOverlayContainer {
     Class overlayClass = NSClassFromString(@"YTVideoOverlay");
     if (overlayClass && [overlayClass respondsToSelector:@selector(sharedOverlay)]) {
@@ -54,7 +72,7 @@
         }
     }
 
-    UIWindow *keyWindow = [UIApplication sharedApplication].keyWindow;
+    UIWindow *keyWindow = [self currentKeyWindow];
     return keyWindow.rootViewController.view;
 }
 
@@ -173,7 +191,7 @@
 }
 
 - (UIViewController *)topViewController {
-    UIViewController *root = [UIApplication sharedApplication].keyWindow.rootViewController;
+    UIViewController *root = [self currentKeyWindow].rootViewController;
     UIViewController *top = root;
     while (top.presentedViewController) {
         top = top.presentedViewController;
