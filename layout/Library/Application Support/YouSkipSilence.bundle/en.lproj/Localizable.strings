@@ -1,0 +1,31 @@
+/* YouSkipSilence - Settings */
+"ENABLED" = "Enable Skip Silence button";
+"POSITION" = "Skip Silence button position";
+
+/* Settings popup */
+"SETTINGS_TITLE" = "Skip Silence Settings";
+"PLAYBACK_SPEED" = "Playback Speed";
+"SILENCE_SPEED" = "Silence Speed";
+"DYNAMIC_THRESHOLD" = "Dynamic Threshold";
+"CUSTOM_SPEED" = "Custom";
+"CANCEL" = "Cancel";
+"DONE" = "Done";
+"ENTER_CUSTOM_SPEED" = "Enter custom speed";
+
+/* Time saved */
+"CURRENT_VIDEO_SAVED" = "Current Video";
+"LAST_VIDEO_SAVED" = "Last Video";
+"TOTAL_TIME_SAVED" = "Total Saved";
+"RESET_TIME_SAVED" = "Reset Time Saved";
+
+/* Settings page - Time saved */
+"TIME_SAVED_LAST_VIDEO" = "Time Saved (Last Video)";
+"TIME_SAVED_TOTAL" = "Time Saved (Total)";
+
+/* Status messages */
+"SKIP_SILENCE_ENABLED" = "Skip Silence enabled";
+"SKIP_SILENCE_DISABLED" = "Skip Silence disabled";
+
+/* Extra settings keys */
+"YouSkipSilence-DynamicThreshold_KEY" = "Dynamic Threshold";
+"YouSkipSilence-DynamicThreshold_KEY_DESC" = "Automatically adjust silence threshold based on audio levels";

@@ -1,0 +1,9 @@
+Package: com.sohday67.youskipsilence
+Name: YouSkipSilence
+Version: 1.0.0
+Architecture: iphoneos-arm
+Description: Skip silent parts of videos automatically with adjustable playback and silence speeds
+Maintainer: Sohday67
+Author: Sohday67
+Section: Tweaks
+Depends: mobilesubstrate (>= 0.9.5000), firmware (>= 11.0), com.ps.ytvideooverlay (>= 2.0.0)
