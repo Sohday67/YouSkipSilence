@@ -19,6 +19,7 @@ static inline void initYTVideoOverlay(NSString *tweakKey, NSDictionary *options)
     (void)options;
 }
 #endif
+#if __has_include(<YouTubeHeader/YTColor.h>)
 #import <YouTubeHeader/YTColor.h>
 #import <YouTubeHeader/QTMIcon.h>
 #import <YouTubeHeader/YTMainAppVideoPlayerOverlayViewController.h>
@@ -30,6 +31,56 @@ static inline void initYTVideoOverlay(NSString *tweakKey, NSDictionary *options)
 #import <YouTubeHeader/YTSettingsSectionItem.h>
 #import <YouTubeHeader/YTSettingsSectionItemManager.h>
 #import <YouTubeHeader/YTSettingsViewController.h>
+#else
+@class UIImage;
+@class UIColor;
+@class YTSettingsCell;
+
+@interface YTColor : NSObject
++ (UIColor *)white1;
+@end
+
+@interface QTMIcon : NSObject
++ (UIImage *)tintImage:(UIImage *)image color:(UIColor *)color;
+@end
+
+@interface YTMainAppVideoPlayerOverlayViewController : NSObject
+@end
+
+@interface YTMainAppVideoPlayerOverlayView : NSObject
+@end
+
+@interface YTMainAppControlsOverlayView : NSObject
+@end
+
+@interface YTPlayerViewController : NSObject
+@end
+
+@interface GOOHUDManagerInternal : NSObject
++ (instancetype)sharedInstance;
+- (void)showMessageMainThread:(id)message;
+@end
+
+@interface YTHUDMessage : NSObject
++ (instancetype)messageWithText:(NSString *)text;
+@end
+
+@interface YTSettingsSectionItem : NSObject
+@property (nonatomic, copy, readonly) NSString *title;
+@property (nonatomic, assign, getter=isEnabled) BOOL enabled;
++ (instancetype)itemWithTitle:(NSString *)title
+      accessibilityIdentifier:(NSString *)accessibilityIdentifier
+               detailTextBlock:(NSString *(^)(void))detailTextBlock
+                   selectBlock:(BOOL (^)(YTSettingsCell *cell, NSUInteger arg1))selectBlock;
+@end
+
+@interface YTSettingsSectionItemManager : NSObject
+@end
+
+@interface YTSettingsViewController : NSObject
+- (void)reloadData;
+@end
+#endif
 
 #define TweakKey @"YouSkipSilence"
 #define DynamicThresholdKey @"YouSkipSilence-DynamicThreshold"
