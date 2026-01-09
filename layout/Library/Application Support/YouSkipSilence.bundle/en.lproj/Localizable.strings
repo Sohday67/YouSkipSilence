@@ -12,6 +12,12 @@
 "DONE" = "Done";
 "ENTER_CUSTOM_SPEED" = "Enter custom speed";
 
+/* Time saved */
+"CURRENT_VIDEO_SAVED" = "Current Video";
+"LAST_VIDEO_SAVED" = "Last Video";
+"TOTAL_TIME_SAVED" = "Total Saved";
+"RESET_TIME_SAVED" = "Reset Time Saved";
+
 /* Status messages */
 "SKIP_SILENCE_ENABLED" = "Skip Silence enabled";
 "SKIP_SILENCE_DISABLED" = "Skip Silence disabled";

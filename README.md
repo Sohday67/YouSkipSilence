@@ -11,6 +11,11 @@ A YouTube tweak for iOS that automatically skips silent parts of videos. Inspire
   - Silence Speed: 1.5x - 4.0x (or custom)
 - **Overlay Button**: Easy toggle on/off with visual feedback (icon changes when enabled)
 - **Long Press Settings**: Quick access to settings popup by long-pressing the button
+- **Time Saved Tracking**: See how much time the extension has saved:
+  - Current video time saved
+  - Last video time saved
+  - Total time saved across all videos
+  - Option to reset time saved stats
 - **Default Settings**: Playback speed 1.1x, Silence speed 2x
 
 ## Requirements
@@ -32,6 +37,8 @@ A YouTube tweak for iOS that automatically skips silent parts of videos. Inspire
    - Playback speed options (1.1x - 1.5x or custom)
    - Silence speed options (1.5x - 4.0x or custom)
    - Dynamic threshold toggle
+   - Time saved statistics (current video, last video, total)
+   - Reset time saved button
 
 ## Building
 

@@ -18,6 +18,8 @@
 #define PlaybackSpeedKey @"YouSkipSilence-PlaybackSpeed"
 #define SilenceSpeedKey @"YouSkipSilence-SilenceSpeed"
 #define EnabledKey @"YouSkipSilence-Enabled"
+#define TotalTimeSavedKey @"YouSkipSilence-TotalTimeSaved"
+#define LastVideoTimeSavedKey @"YouSkipSilence-LastVideoTimeSaved"
 
 // Default values
 static const float kDefaultPlaybackSpeed = 1.1f;
@@ -77,6 +79,11 @@ static const int kSamplesThreshold = 10;
 @property (nonatomic, strong) AVAudioMix *audioMix;
 @property (nonatomic, strong) MTAudioProcessingTap *audioTap;
 @property (nonatomic, assign) float currentVolume;
+@property (nonatomic, assign) NSTimeInterval totalTimeSaved;
+@property (nonatomic, assign) NSTimeInterval lastVideoTimeSaved;
+@property (nonatomic, assign) NSTimeInterval currentVideoTimeSaved;
+@property (nonatomic, strong) NSString *lastVideoID;
+@property (nonatomic, assign) CFTimeInterval lastSpeedUpTime;
 
 + (instancetype)sharedManager;
 - (void)toggle;
@@ -84,6 +91,9 @@ static const int kSamplesThreshold = 10;
 - (void)detach;
 - (void)loadSettings;
 - (void)saveSettings;
+- (void)resetTimeSaved;
+- (NSString *)formattedTimeSaved:(NSTimeInterval)seconds;
+- (void)updateVideoID:(NSString *)videoID;
 
 @end
 
@@ -110,6 +120,10 @@ static const int kSamplesThreshold = 10;
         _samplesUnderThreshold = 0;
         _previousSamples = [NSMutableArray array];
         _currentVolume = 0;
+        _totalTimeSaved = 0;
+        _lastVideoTimeSaved = 0;
+        _currentVideoTimeSaved = 0;
+        _lastSpeedUpTime = 0;
         [self loadSettings];
     }
     return self;
@@ -130,6 +144,12 @@ static const int kSamplesThreshold = 10;
     if ([defaults objectForKey:EnabledKey] != nil) {
         _isEnabled = [defaults boolForKey:EnabledKey];
     }
+    if ([defaults objectForKey:TotalTimeSavedKey] != nil) {
+        _totalTimeSaved = [defaults doubleForKey:TotalTimeSavedKey];
+    }
+    if ([defaults objectForKey:LastVideoTimeSavedKey] != nil) {
+        _lastVideoTimeSaved = [defaults doubleForKey:LastVideoTimeSavedKey];
+    }
 }
 
 - (void)saveSettings {
@@ -138,6 +158,8 @@ static const int kSamplesThreshold = 10;
     [defaults setFloat:_silenceSpeed forKey:SilenceSpeedKey];
     [defaults setBool:_dynamicThreshold forKey:DynamicThresholdKey];
     [defaults setBool:_isEnabled forKey:EnabledKey];
+    [defaults setDouble:_totalTimeSaved forKey:TotalTimeSavedKey];
+    [defaults setDouble:_lastVideoTimeSaved forKey:LastVideoTimeSavedKey];
     [defaults synchronize];
 }
 
@@ -342,14 +364,30 @@ static const int kSamplesThreshold = 10;
     if (!_currentPlayer) return;
     
     _isSpedUp = YES;
+    _lastSpeedUpTime = CACurrentMediaTime();
     _currentPlayer.rate = _silenceSpeed;
 }
 
 - (void)slowDown {
     if (!_currentPlayer) return;
     
+    // Calculate time saved during this sped-up period
+    if (_isSpedUp && _lastSpeedUpTime > 0) {
+        CFTimeInterval spedUpDuration = CACurrentMediaTime() - _lastSpeedUpTime;
+        // Time saved = actual duration - (actual duration / silence speed)
+        // At 2x speed, 10 seconds of real time covers 20 seconds of video
+        // So time saved = 10 - (10 / 2) = 10 - 5 = 5 seconds saved
+        NSTimeInterval timeSaved = spedUpDuration * (1.0f - 1.0f / _silenceSpeed);
+        if (timeSaved > 0) {
+            _currentVideoTimeSaved += timeSaved;
+            _totalTimeSaved += timeSaved;
+            [self saveSettings];
+        }
+    }
+    
     _isSpedUp = NO;
     _samplesUnderThreshold = 0;
+    _lastSpeedUpTime = 0;
     
     // Use slightly above 1.0 to avoid audio clicking (from skip-silence)
     float speed = _playbackSpeed;
@@ -357,6 +395,44 @@ static const int kSamplesThreshold = 10;
         speed = 1.01f;
     }
     _currentPlayer.rate = speed;
+}
+
+- (void)resetTimeSaved {
+    _totalTimeSaved = 0;
+    _lastVideoTimeSaved = 0;
+    _currentVideoTimeSaved = 0;
+    [self saveSettings];
+}
+
+- (NSString *)formattedTimeSaved:(NSTimeInterval)seconds {
+    // Handle edge cases
+    if (seconds <= 0) {
+        return @"0s";
+    }
+    
+    if (seconds < 60) {
+        return [NSString stringWithFormat:@"%.1fs", seconds];
+    } else if (seconds < 3600) {
+        int minutes = (int)(seconds / 60);
+        int secs = (int)fmod(seconds, 60);
+        return [NSString stringWithFormat:@"%dm %ds", minutes, secs];
+    } else {
+        int hours = (int)(seconds / 3600);
+        int minutes = (int)(fmod(seconds, 3600) / 60);
+        return [NSString stringWithFormat:@"%dh %dm", hours, minutes];
+    }
+}
+
+- (void)updateVideoID:(NSString *)videoID {
+    if (videoID && ![videoID isEqualToString:_lastVideoID]) {
+        // New video started, save the previous video's time saved
+        if (_currentVideoTimeSaved > 0) {
+            _lastVideoTimeSaved = _currentVideoTimeSaved;
+            [self saveSettings];
+        }
+        _currentVideoTimeSaved = 0;
+        _lastVideoID = videoID;
+    }
 }
 
 @end
@@ -539,6 +615,53 @@ static void showSettingsPopup(UIViewController *presenter) {
     }];
     [alert addAction:dynamicAction];
     
+    // Divider before stats
+    UIAlertAction *divider2 = [UIAlertAction actionWithTitle:@"────────────"
+                                                       style:UIAlertActionStyleDefault
+                                                     handler:nil];
+    divider2.enabled = NO;
+    [alert addAction:divider2];
+    
+    // Time saved stats (display only, not clickable)
+    NSTimeInterval currentVideoSaved = manager.currentVideoTimeSaved;
+    NSString *currentVideoTitle = [NSString stringWithFormat:@"⏱ %@: %@",
+                                   YSSLocalized(@"CURRENT_VIDEO_SAVED"),
+                                   [manager formattedTimeSaved:currentVideoSaved]];
+    UIAlertAction *currentVideoAction = [UIAlertAction actionWithTitle:currentVideoTitle
+                                                                 style:UIAlertActionStyleDefault
+                                                               handler:nil];
+    currentVideoAction.enabled = NO;
+    [alert addAction:currentVideoAction];
+    
+    NSTimeInterval lastVideoSaved = manager.lastVideoTimeSaved;
+    NSString *lastVideoTitle = [NSString stringWithFormat:@"⏱ %@: %@",
+                                YSSLocalized(@"LAST_VIDEO_SAVED"),
+                                [manager formattedTimeSaved:lastVideoSaved]];
+    UIAlertAction *lastVideoAction = [UIAlertAction actionWithTitle:lastVideoTitle
+                                                              style:UIAlertActionStyleDefault
+                                                            handler:nil];
+    lastVideoAction.enabled = NO;
+    [alert addAction:lastVideoAction];
+    
+    NSTimeInterval totalSaved = manager.totalTimeSaved;
+    NSString *totalTitle = [NSString stringWithFormat:@"⏱ %@: %@",
+                            YSSLocalized(@"TOTAL_TIME_SAVED"),
+                            [manager formattedTimeSaved:totalSaved]];
+    UIAlertAction *totalAction = [UIAlertAction actionWithTitle:totalTitle
+                                                          style:UIAlertActionStyleDefault
+                                                        handler:nil];
+    totalAction.enabled = NO;
+    [alert addAction:totalAction];
+    
+    // Reset time saved option
+    UIAlertAction *resetAction = [UIAlertAction actionWithTitle:YSSLocalized(@"RESET_TIME_SAVED")
+                                                          style:UIAlertActionStyleDestructive
+                                                        handler:^(UIAlertAction *a) {
+        [manager resetTimeSaved];
+        showSettingsPopup(presenter);
+    }];
+    [alert addAction:resetAction];
+    
     // Cancel
     UIAlertAction *cancel = [UIAlertAction actionWithTitle:YSSLocalized(@"CANCEL")
                                                      style:UIAlertActionStyleCancel
@@ -564,6 +687,14 @@ static void showSettingsPopup(UIViewController *presenter) {
 %new
 - (void)didPressYouSkipSilence {
     YouSkipSilenceManager *manager = [YouSkipSilenceManager sharedManager];
+    
+    // Track video ID changes for time saved per video
+    if ([self respondsToSelector:@selector(currentVideoID)]) {
+        NSString *videoID = [self currentVideoID];
+        if (videoID) {
+            [manager updateVideoID:videoID];
+        }
+    }
     
     // Attach to current player if available
     if ([self respondsToSelector:@selector(player)]) {
