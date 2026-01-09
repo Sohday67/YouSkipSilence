@@ -13,7 +13,7 @@ include $(THEOS)/makefiles/common.mk
 TWEAK_NAME = YouSkipSilence
 
 $(TWEAK_NAME)_FILES = Tweak.x
-$(TWEAK_NAME)_CFLAGS = -fobjc-arc -I$(THEOS_PROJECT_DIR)/include
+$(TWEAK_NAME)_CFLAGS = -fobjc-arc
 $(TWEAK_NAME)_FRAMEWORKS = UIKit AVFoundation CoreMedia QuartzCore
 
 include $(THEOS_MAKE_PATH)/tweak.mk
