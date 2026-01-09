@@ -18,6 +18,10 @@
 "TOTAL_TIME_SAVED" = "Total Saved";
 "RESET_TIME_SAVED" = "Reset Time Saved";
 
+/* Settings page - Time saved */
+"TIME_SAVED_LAST_VIDEO" = "Time Saved (Last Video)";
+"TIME_SAVED_TOTAL" = "Time Saved (Total)";
+
 /* Status messages */
 "SKIP_SILENCE_ENABLED" = "Skip Silence enabled";
 "SKIP_SILENCE_DISABLED" = "Skip Silence disabled";
