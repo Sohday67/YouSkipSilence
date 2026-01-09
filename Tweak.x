@@ -56,7 +56,7 @@ static const int kSamplesThreshold = 10;
 
 @interface YTMainAppControlsOverlayView (YouSkipSilence)
 @property (nonatomic, assign) YTPlayerViewController *playerViewController;
-@property (retain, nonatomic) NSMutableDictionary *overlayButtons;
+@property (nonatomic, strong) NSMutableDictionary *overlayButtons;
 - (void)didPressYouSkipSilence:(id)arg;
 - (void)didLongPressYouSkipSilence:(UILongPressGestureRecognizer *)gesture;
 @end
@@ -66,7 +66,7 @@ static const int kSamplesThreshold = 10;
 
 @interface YTInlinePlayerBarContainerView (YouSkipSilence)
 @property (nonatomic, strong) YTInlinePlayerBarController *delegate;
-@property (retain, nonatomic) NSMutableDictionary *overlayButtons;
+@property (nonatomic, strong) NSMutableDictionary *overlayButtons;
 - (void)didPressYouSkipSilence:(id)arg;
 - (void)didLongPressYouSkipSilence:(UILongPressGestureRecognizer *)gesture;
 @end
