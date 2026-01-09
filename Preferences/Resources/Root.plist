@@ -1,0 +1,157 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>PreferenceSpecifiers</key>
+    <array>
+        <dict>
+            <key>cell</key>
+            <string>PSGroupCell</string>
+            <key>label</key>
+            <string>Skip Silence</string>
+        </dict>
+        <dict>
+            <key>cell</key>
+            <string>PSSwitchCell</string>
+            <key>default</key>
+            <true/>
+            <key>key</key>
+            <string>Enabled</string>
+            <key>label</key>
+            <string>Enabled</string>
+        </dict>
+        <dict>
+            <key>cell</key>
+            <string>PSSwitchCell</string>
+            <key>default</key>
+            <true/>
+            <key>key</key>
+            <string>DynamicThreshold</string>
+            <key>label</key>
+            <string>Dynamic threshold</string>
+        </dict>
+        <dict>
+            <key>cell</key>
+            <string>PSSliderCell</string>
+            <key>default</key>
+            <real>0.02</real>
+            <key>key</key>
+            <string>FixedThreshold</string>
+            <key>label</key>
+            <string>Fixed threshold</string>
+            <key>min</key>
+            <real>0.001</real>
+            <key>max</key>
+            <real>0.1</real>
+            <key>isEnabled</key>
+            <string>dynamicThresholdDisabled:</string>
+        </dict>
+        <dict>
+            <key>cell</key>
+            <string>PSLinkListCell</string>
+            <key>label</key>
+            <string>Playback speed</string>
+            <key>key</key>
+            <string>PlaybackSpeed</string>
+            <key>default</key>
+            <real>1.1</real>
+            <key>values</key>
+            <array>
+                <real>1.1</real>
+                <real>1.2</real>
+                <real>1.3</real>
+                <real>1.4</real>
+                <real>1.5</real>
+            </array>
+            <key>titles</key>
+            <array>
+                <string>1.1x</string>
+                <string>1.2x</string>
+                <string>1.3x</string>
+                <string>1.4x</string>
+                <string>1.5x</string>
+            </array>
+        </dict>
+        <dict>
+            <key>cell</key>
+            <string>PSEditTextCell</string>
+            <key>label</key>
+            <string>Playback speed (custom)</string>
+            <key>key</key>
+            <string>PlaybackSpeed</string>
+            <key>placeholder</key>
+            <string>1.1</string>
+            <key>keyboardType</key>
+            <string>DecimalPad</string>
+        </dict>
+        <dict>
+            <key>cell</key>
+            <string>PSLinkListCell</string>
+            <key>label</key>
+            <string>Silence speed</string>
+            <key>key</key>
+            <string>SilenceSpeed</string>
+            <key>default</key>
+            <real>2.0</real>
+            <key>values</key>
+            <array>
+                <real>1.5</real>
+                <real>2.0</real>
+                <real>2.5</real>
+                <real>3.0</real>
+            </array>
+            <key>titles</key>
+            <array>
+                <string>1.5x</string>
+                <string>2.0x</string>
+                <string>2.5x</string>
+                <string>3.0x</string>
+            </array>
+        </dict>
+        <dict>
+            <key>cell</key>
+            <string>PSEditTextCell</string>
+            <key>label</key>
+            <string>Silence speed (custom)</string>
+            <key>key</key>
+            <string>SilenceSpeed</string>
+            <key>placeholder</key>
+            <string>2.0</string>
+            <key>keyboardType</key>
+            <string>DecimalPad</string>
+        </dict>
+        <dict>
+            <key>cell</key>
+            <string>PSGroupCell</string>
+            <key>label</key>
+            <string>Statistics</string>
+        </dict>
+        <dict>
+            <key>cell</key>
+            <string>PSStaticTextCell</string>
+            <key>label</key>
+            <string>Total time saved</string>
+            <key>get</key>
+            <string>totalSavedText</string>
+        </dict>
+        <dict>
+            <key>cell</key>
+            <string>PSStaticTextCell</string>
+            <key>label</key>
+            <string>Last video saved</string>
+            <key>get</key>
+            <string>lastSavedText</string>
+        </dict>
+        <dict>
+            <key>cell</key>
+            <string>PSButtonCell</string>
+            <key>label</key>
+            <string>Reset statistics</string>
+            <key>action</key>
+            <string>resetStatistics</string>
+        </dict>
+    </array>
+    <key>StringsTable</key>
+    <string>Root</string>
+</dict>
+</plist>
