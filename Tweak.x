@@ -1,6 +1,11 @@
 #import <Foundation/Foundation.h>
 #import <AVFoundation/AVFoundation.h>
+#import <MediaToolbox/MTAudioProcessingTap.h>
 #import <UIKit/UIKit.h>
+
+#ifndef ROOT_PATH_NS
+#define ROOT_PATH_NS(path) path
+#endif
 
 #if __has_include(<YTVideoOverlay/Header.h>)
 #import <YTVideoOverlay/Header.h>
@@ -35,6 +40,7 @@ static inline void initYTVideoOverlay(NSString *tweakKey, NSDictionary *options)
 @class UIImage;
 @class UIColor;
 @class YTSettingsCell;
+@class UIButton;
 
 @interface YTColor : NSObject
 + (UIColor *)white1;
@@ -118,6 +124,7 @@ static const int kSamplesThreshold = 10;
 
 @interface YTMainAppControlsOverlayView (YouSkipSilence)
 @property (nonatomic, assign) YTPlayerViewController *playerViewController;
+@property (nonatomic, strong, readonly) NSDictionary *overlayButtons;
 - (void)didPressYouSkipSilence:(id)arg;
 - (void)didLongPressYouSkipSilence:(UILongPressGestureRecognizer *)gesture;
 @end
@@ -127,6 +134,7 @@ static const int kSamplesThreshold = 10;
 
 @interface YTInlinePlayerBarContainerView (YouSkipSilence)
 @property (nonatomic, strong) YTInlinePlayerBarController *delegate;
+@property (nonatomic, strong, readonly) NSDictionary *overlayButtons;
 - (void)didPressYouSkipSilence:(id)arg;
 - (void)didLongPressYouSkipSilence:(UILongPressGestureRecognizer *)gesture;
 @end
@@ -146,7 +154,7 @@ static const int kSamplesThreshold = 10;
 @property (nonatomic, weak) AVPlayer *currentPlayer;
 @property (nonatomic, strong) NSTimer *analysisTimer;
 @property (nonatomic, strong) AVAudioMix *audioMix;
-@property (nonatomic, strong) MTAudioProcessingTap *audioTap;
+@property (nonatomic, assign) MTAudioProcessingTapRef audioTap;
 @property (nonatomic, assign) float currentVolume;
 @property (nonatomic, assign) NSTimeInterval totalTimeSaved;
 @property (nonatomic, assign) NSTimeInterval lastVideoTimeSaved;
@@ -371,7 +379,6 @@ static const int kSamplesThreshold = 10;
     static int consecutiveLowSamples = 0;
     
     CFTimeInterval currentTime = CACurrentMediaTime();
-    CFTimeInterval timeDelta = currentTime - lastAnalysisTime;
     lastAnalysisTime = currentTime;
     
     // Check playback position to detect potential silence at video boundaries
