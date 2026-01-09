@@ -841,6 +841,69 @@ static void showSettingsPopup(UIViewController *presenter) {
 
 #pragma mark - Settings Page Time Saved
 
+// Helper function to add time saved items to the settings section
+static NSArray *addTimeSavedItemsToSettings(NSArray *items, YTSettingsViewController *settingsController) {
+    NSMutableArray *mutableItems = [items mutableCopy];
+    Class YTSettingsSectionItemClass = %c(YTSettingsSectionItem);
+    
+    // Find the index after YouSkipSilence items (look for the next header or end)
+    NSInteger insertIndex = -1;
+    BOOL foundYouSkipSilence = NO;
+    
+    for (NSInteger i = 0; i < mutableItems.count; i++) {
+        YTSettingsSectionItem *item = mutableItems[i];
+        NSString *itemTitle = [item title];
+        
+        if ([itemTitle isEqualToString:TweakKey]) {
+            foundYouSkipSilence = YES;
+        } else if (foundYouSkipSilence && !item.enabled) {
+            // Found the next header (headers have enabled = NO)
+            insertIndex = i;
+            break;
+        }
+    }
+    
+    // If we found YouSkipSilence but no next section, insert at end
+    if (foundYouSkipSilence && insertIndex == -1) {
+        insertIndex = mutableItems.count;
+    }
+    
+    if (insertIndex > 0) {
+        // Time saved (Last Video) - display only
+        YTSettingsSectionItem *lastVideoItem = [YTSettingsSectionItemClass itemWithTitle:YSSLocalized(@"TIME_SAVED_LAST_VIDEO")
+            accessibilityIdentifier:nil
+            detailTextBlock:^NSString *() {
+                return [[YouSkipSilenceManager sharedManager] formattedTimeSaved:[YouSkipSilenceManager sharedManager].lastVideoTimeSaved];
+            }
+            selectBlock:nil];
+        [mutableItems insertObject:lastVideoItem atIndex:insertIndex];
+        insertIndex++;
+        
+        // Time saved (Total) - display only
+        YTSettingsSectionItem *totalItem = [YTSettingsSectionItemClass itemWithTitle:YSSLocalized(@"TIME_SAVED_TOTAL")
+            accessibilityIdentifier:nil
+            detailTextBlock:^NSString *() {
+                return [[YouSkipSilenceManager sharedManager] formattedTimeSaved:[YouSkipSilenceManager sharedManager].totalTimeSaved];
+            }
+            selectBlock:nil];
+        [mutableItems insertObject:totalItem atIndex:insertIndex];
+        insertIndex++;
+        
+        // Reset time saved button
+        YTSettingsSectionItem *resetItem = [YTSettingsSectionItemClass itemWithTitle:YSSLocalized(@"RESET_TIME_SAVED")
+            accessibilityIdentifier:nil
+            detailTextBlock:nil
+            selectBlock:^BOOL (YTSettingsCell *cell, NSUInteger arg1) {
+                [[YouSkipSilenceManager sharedManager] resetTimeSaved];
+                [settingsController reloadData];
+                return YES;
+            }];
+        [mutableItems insertObject:resetItem atIndex:insertIndex];
+    }
+    
+    return mutableItems;
+}
+
 %group Settings
 
 %hook YTSettingsViewController
@@ -848,67 +911,7 @@ static void showSettingsPopup(UIViewController *presenter) {
 // Hook into setSectionItems to add our time saved items after YouSkipSilence section
 - (void)setSectionItems:(NSArray *)items forCategory:(NSUInteger)category title:(NSString *)title titleDescription:(NSString *)desc headerHidden:(BOOL)hidden {
     if (category == 1222) { // YTVideoOverlaySection
-        NSMutableArray *mutableItems = [items mutableCopy];
-        
-        // Find the YouSkipSilence section and add time saved items after it
-        Class YTSettingsSectionItemClass = %c(YTSettingsSectionItem);
-        
-        // Find the index after YouSkipSilence items (look for the next header or end)
-        NSInteger insertIndex = -1;
-        BOOL foundYouSkipSilence = NO;
-        
-        for (NSInteger i = 0; i < mutableItems.count; i++) {
-            YTSettingsSectionItem *item = mutableItems[i];
-            NSString *itemTitle = [item title];
-            
-            if ([itemTitle isEqualToString:TweakKey]) {
-                foundYouSkipSilence = YES;
-            } else if (foundYouSkipSilence && !item.enabled) {
-                // Found the next header (headers have enabled = NO)
-                insertIndex = i;
-                break;
-            }
-        }
-        
-        // If we found YouSkipSilence but no next section, insert at end
-        if (foundYouSkipSilence && insertIndex == -1) {
-            insertIndex = mutableItems.count;
-        }
-        
-        if (insertIndex > 0) {
-            // Time saved (Last Video) - display only
-            YTSettingsSectionItem *lastVideoItem = [YTSettingsSectionItemClass itemWithTitle:YSSLocalized(@"TIME_SAVED_LAST_VIDEO")
-                accessibilityIdentifier:nil
-                detailTextBlock:^NSString *() {
-                    return [[YouSkipSilenceManager sharedManager] formattedTimeSaved:[YouSkipSilenceManager sharedManager].lastVideoTimeSaved];
-                }
-                selectBlock:nil];
-            [mutableItems insertObject:lastVideoItem atIndex:insertIndex];
-            insertIndex++;
-            
-            // Time saved (Total) - display only
-            YTSettingsSectionItem *totalItem = [YTSettingsSectionItemClass itemWithTitle:YSSLocalized(@"TIME_SAVED_TOTAL")
-                accessibilityIdentifier:nil
-                detailTextBlock:^NSString *() {
-                    return [[YouSkipSilenceManager sharedManager] formattedTimeSaved:[YouSkipSilenceManager sharedManager].totalTimeSaved];
-                }
-                selectBlock:nil];
-            [mutableItems insertObject:totalItem atIndex:insertIndex];
-            insertIndex++;
-            
-            // Reset time saved button
-            YTSettingsSectionItem *resetItem = [YTSettingsSectionItemClass itemWithTitle:YSSLocalized(@"RESET_TIME_SAVED")
-                accessibilityIdentifier:nil
-                detailTextBlock:nil
-                selectBlock:^BOOL (YTSettingsCell *cell, NSUInteger arg1) {
-                    [[YouSkipSilenceManager sharedManager] resetTimeSaved];
-                    [self reloadData];
-                    return YES;
-                }];
-            [mutableItems insertObject:resetItem atIndex:insertIndex];
-        }
-        
-        items = mutableItems;
+        items = addTimeSavedItemsToSettings(items, self);
     }
     
     %orig(items, category, title, desc, hidden);
@@ -917,67 +920,7 @@ static void showSettingsPopup(UIViewController *presenter) {
 // Also hook the newer method signature with icon parameter
 - (void)setSectionItems:(NSArray *)items forCategory:(NSUInteger)category title:(NSString *)title icon:(id)icon titleDescription:(NSString *)desc headerHidden:(BOOL)hidden {
     if (category == 1222) { // YTVideoOverlaySection
-        NSMutableArray *mutableItems = [items mutableCopy];
-        
-        // Find the YouSkipSilence section and add time saved items after it
-        Class YTSettingsSectionItemClass = %c(YTSettingsSectionItem);
-        
-        // Find the index after YouSkipSilence items (look for the next header or end)
-        NSInteger insertIndex = -1;
-        BOOL foundYouSkipSilence = NO;
-        
-        for (NSInteger i = 0; i < mutableItems.count; i++) {
-            YTSettingsSectionItem *item = mutableItems[i];
-            NSString *itemTitle = [item title];
-            
-            if ([itemTitle isEqualToString:TweakKey]) {
-                foundYouSkipSilence = YES;
-            } else if (foundYouSkipSilence && !item.enabled) {
-                // Found the next header (headers have enabled = NO)
-                insertIndex = i;
-                break;
-            }
-        }
-        
-        // If we found YouSkipSilence but no next section, insert at end
-        if (foundYouSkipSilence && insertIndex == -1) {
-            insertIndex = mutableItems.count;
-        }
-        
-        if (insertIndex > 0) {
-            // Time saved (Last Video) - display only
-            YTSettingsSectionItem *lastVideoItem = [YTSettingsSectionItemClass itemWithTitle:YSSLocalized(@"TIME_SAVED_LAST_VIDEO")
-                accessibilityIdentifier:nil
-                detailTextBlock:^NSString *() {
-                    return [[YouSkipSilenceManager sharedManager] formattedTimeSaved:[YouSkipSilenceManager sharedManager].lastVideoTimeSaved];
-                }
-                selectBlock:nil];
-            [mutableItems insertObject:lastVideoItem atIndex:insertIndex];
-            insertIndex++;
-            
-            // Time saved (Total) - display only
-            YTSettingsSectionItem *totalItem = [YTSettingsSectionItemClass itemWithTitle:YSSLocalized(@"TIME_SAVED_TOTAL")
-                accessibilityIdentifier:nil
-                detailTextBlock:^NSString *() {
-                    return [[YouSkipSilenceManager sharedManager] formattedTimeSaved:[YouSkipSilenceManager sharedManager].totalTimeSaved];
-                }
-                selectBlock:nil];
-            [mutableItems insertObject:totalItem atIndex:insertIndex];
-            insertIndex++;
-            
-            // Reset time saved button
-            YTSettingsSectionItem *resetItem = [YTSettingsSectionItemClass itemWithTitle:YSSLocalized(@"RESET_TIME_SAVED")
-                accessibilityIdentifier:nil
-                detailTextBlock:nil
-                selectBlock:^BOOL (YTSettingsCell *cell, NSUInteger arg1) {
-                    [[YouSkipSilenceManager sharedManager] resetTimeSaved];
-                    [self reloadData];
-                    return YES;
-                }];
-            [mutableItems insertObject:resetItem atIndex:insertIndex];
-        }
-        
-        items = mutableItems;
+        items = addTimeSavedItemsToSettings(items, self);
     }
     
     %orig(items, category, title, icon, desc, hidden);
