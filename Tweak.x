@@ -311,8 +311,9 @@ static void addLongPressGestureToButton(YTQTMButton *button, id target, SEL sele
     
     @try {
         if (_currentVideoController) {
-            // Check if video is playing
-            BOOL isPlaying = ![_currentVideoController isPaused];
+            // Check if video is playing using valueForKey to avoid selector issues
+            NSNumber *pausedValue = [_currentVideoController valueForKey:@"paused"];
+            BOOL isPlaying = pausedValue ? ![pausedValue boolValue] : YES;
             if (!isPlaying) {
                 return 0;
             }
