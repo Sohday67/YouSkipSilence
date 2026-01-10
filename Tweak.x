@@ -479,205 +479,356 @@ static UIImage *skipSilenceImage(NSString *qualityLabel, BOOL enabled) {
     return [%c(QTMIcon) tintImage:image color:[%c(YTColor) white1]];
 }
 
-#pragma mark - Settings Popup
+#pragma mark - Settings Popup View Controller
 
-static void showSettingsPopup(UIViewController *presenter) {
+@interface YouSkipSilenceSettingsViewController : UIViewController
+@property (nonatomic, strong) UISlider *playbackSpeedSlider;
+@property (nonatomic, strong) UISlider *silenceSpeedSlider;
+@property (nonatomic, strong) UISlider *thresholdSlider;
+@property (nonatomic, strong) UIView *audioVisualizerView;
+@property (nonatomic, strong) UIView *audioLevelBar;
+@property (nonatomic, strong) UIView *thresholdLine;
+@property (nonatomic, strong) UILabel *playbackSpeedLabel;
+@property (nonatomic, strong) UILabel *silenceSpeedLabel;
+@property (nonatomic, strong) UILabel *thresholdLabel;
+@property (nonatomic, strong) UISwitch *dynamicThresholdSwitch;
+@property (nonatomic, strong) NSTimer *visualizerTimer;
+@end
+
+@implementation YouSkipSilenceSettingsViewController
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    
     YouSkipSilenceManager *manager = [YouSkipSilenceManager sharedManager];
     
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:YSSLocalized(@"SETTINGS_TITLE")
-                                                                   message:nil
-                                                            preferredStyle:UIAlertControllerStyleActionSheet];
+    // Semi-transparent dark background
+    self.view.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.85];
     
-    // Playback Speed options
-    NSArray *playbackSpeeds = @[@1.1, @1.2, @1.3, @1.4, @1.5];
-    for (NSNumber *speed in playbackSpeeds) {
-        NSString *title = [NSString stringWithFormat:@"%@ %.1fx%@", 
-                          YSSLocalized(@"PLAYBACK_SPEED"), 
-                          [speed floatValue],
-                          (fabsf(manager.playbackSpeed - [speed floatValue]) < 0.01f) ? @" ✓" : @""];
+    // Container view
+    UIView *containerView = [[UIView alloc] init];
+    containerView.backgroundColor = [UIColor colorWithWhite:0.15 alpha:1.0];
+    containerView.layer.cornerRadius = 16;
+    containerView.translatesAutoresizingMaskIntoConstraints = NO;
+    [self.view addSubview:containerView];
+    
+    // Title
+    UILabel *titleLabel = [[UILabel alloc] init];
+    titleLabel.text = YSSLocalized(@"SETTINGS_TITLE");
+    titleLabel.font = [UIFont boldSystemFontOfSize:18];
+    titleLabel.textColor = [UIColor whiteColor];
+    titleLabel.textAlignment = NSTextAlignmentCenter;
+    titleLabel.translatesAutoresizingMaskIntoConstraints = NO;
+    [containerView addSubview:titleLabel];
+    
+    // Close button
+    UIButton *closeButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    [closeButton setTitle:@"✕" forState:UIControlStateNormal];
+    closeButton.titleLabel.font = [UIFont systemFontOfSize:20];
+    [closeButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    [closeButton addTarget:self action:@selector(dismissSettings) forControlEvents:UIControlEventTouchUpInside];
+    closeButton.translatesAutoresizingMaskIntoConstraints = NO;
+    [containerView addSubview:closeButton];
+    
+    // Playback Speed Section
+    UILabel *playbackTitleLabel = [[UILabel alloc] init];
+    playbackTitleLabel.text = YSSLocalized(@"PLAYBACK_SPEED");
+    playbackTitleLabel.font = [UIFont systemFontOfSize:14];
+    playbackTitleLabel.textColor = [UIColor lightGrayColor];
+    playbackTitleLabel.translatesAutoresizingMaskIntoConstraints = NO;
+    [containerView addSubview:playbackTitleLabel];
+    
+    self.playbackSpeedLabel = [[UILabel alloc] init];
+    self.playbackSpeedLabel.text = [NSString stringWithFormat:@"%.1fx", manager.playbackSpeed];
+    self.playbackSpeedLabel.font = [UIFont boldSystemFontOfSize:14];
+    self.playbackSpeedLabel.textColor = [UIColor whiteColor];
+    self.playbackSpeedLabel.translatesAutoresizingMaskIntoConstraints = NO;
+    [containerView addSubview:self.playbackSpeedLabel];
+    
+    self.playbackSpeedSlider = [[UISlider alloc] init];
+    self.playbackSpeedSlider.minimumValue = 0.5;
+    self.playbackSpeedSlider.maximumValue = 2.0;
+    self.playbackSpeedSlider.value = manager.playbackSpeed;
+    self.playbackSpeedSlider.tintColor = [UIColor systemBlueColor];
+    [self.playbackSpeedSlider addTarget:self action:@selector(playbackSpeedChanged:) forControlEvents:UIControlEventValueChanged];
+    self.playbackSpeedSlider.translatesAutoresizingMaskIntoConstraints = NO;
+    [containerView addSubview:self.playbackSpeedSlider];
+    
+    // Silence Speed Section
+    UILabel *silenceTitleLabel = [[UILabel alloc] init];
+    silenceTitleLabel.text = YSSLocalized(@"SILENCE_SPEED");
+    silenceTitleLabel.font = [UIFont systemFontOfSize:14];
+    silenceTitleLabel.textColor = [UIColor lightGrayColor];
+    silenceTitleLabel.translatesAutoresizingMaskIntoConstraints = NO;
+    [containerView addSubview:silenceTitleLabel];
+    
+    self.silenceSpeedLabel = [[UILabel alloc] init];
+    self.silenceSpeedLabel.text = [NSString stringWithFormat:@"%.1fx", manager.silenceSpeed];
+    self.silenceSpeedLabel.font = [UIFont boldSystemFontOfSize:14];
+    self.silenceSpeedLabel.textColor = [UIColor whiteColor];
+    self.silenceSpeedLabel.translatesAutoresizingMaskIntoConstraints = NO;
+    [containerView addSubview:self.silenceSpeedLabel];
+    
+    self.silenceSpeedSlider = [[UISlider alloc] init];
+    self.silenceSpeedSlider.minimumValue = 1.5;
+    self.silenceSpeedSlider.maximumValue = 8.0;
+    self.silenceSpeedSlider.value = manager.silenceSpeed;
+    self.silenceSpeedSlider.tintColor = [UIColor systemOrangeColor];
+    [self.silenceSpeedSlider addTarget:self action:@selector(silenceSpeedChanged:) forControlEvents:UIControlEventValueChanged];
+    self.silenceSpeedSlider.translatesAutoresizingMaskIntoConstraints = NO;
+    [containerView addSubview:self.silenceSpeedSlider];
+    
+    // Volume Threshold Section with Visualizer
+    UILabel *thresholdTitleLabel = [[UILabel alloc] init];
+    thresholdTitleLabel.text = YSSLocalized(@"VOLUME_THRESHOLD");
+    thresholdTitleLabel.font = [UIFont systemFontOfSize:14];
+    thresholdTitleLabel.textColor = [UIColor lightGrayColor];
+    thresholdTitleLabel.translatesAutoresizingMaskIntoConstraints = NO;
+    [containerView addSubview:thresholdTitleLabel];
+    
+    self.thresholdLabel = [[UILabel alloc] init];
+    self.thresholdLabel.text = [NSString stringWithFormat:@"%.0f%%", manager.silenceThreshold];
+    self.thresholdLabel.font = [UIFont boldSystemFontOfSize:14];
+    self.thresholdLabel.textColor = [UIColor whiteColor];
+    self.thresholdLabel.translatesAutoresizingMaskIntoConstraints = NO;
+    [containerView addSubview:self.thresholdLabel];
+    
+    // Audio Visualizer Container
+    self.audioVisualizerView = [[UIView alloc] init];
+    self.audioVisualizerView.backgroundColor = [UIColor colorWithWhite:0.1 alpha:1.0];
+    self.audioVisualizerView.layer.cornerRadius = 8;
+    self.audioVisualizerView.clipsToBounds = YES;
+    self.audioVisualizerView.translatesAutoresizingMaskIntoConstraints = NO;
+    [containerView addSubview:self.audioVisualizerView];
+    
+    // Audio Level Bar (green bar showing current audio level)
+    self.audioLevelBar = [[UIView alloc] init];
+    self.audioLevelBar.backgroundColor = [UIColor systemGreenColor];
+    self.audioLevelBar.translatesAutoresizingMaskIntoConstraints = NO;
+    [self.audioVisualizerView addSubview:self.audioLevelBar];
+    
+    // Threshold Line (red line showing threshold)
+    self.thresholdLine = [[UIView alloc] init];
+    self.thresholdLine.backgroundColor = [UIColor systemRedColor];
+    self.thresholdLine.translatesAutoresizingMaskIntoConstraints = NO;
+    [self.audioVisualizerView addSubview:self.thresholdLine];
+    
+    self.thresholdSlider = [[UISlider alloc] init];
+    self.thresholdSlider.minimumValue = 5;
+    self.thresholdSlider.maximumValue = 80;
+    self.thresholdSlider.value = manager.silenceThreshold;
+    self.thresholdSlider.tintColor = [UIColor systemRedColor];
+    [self.thresholdSlider addTarget:self action:@selector(thresholdChanged:) forControlEvents:UIControlEventValueChanged];
+    self.thresholdSlider.translatesAutoresizingMaskIntoConstraints = NO;
+    [containerView addSubview:self.thresholdSlider];
+    
+    // Dynamic Threshold Toggle
+    UILabel *dynamicLabel = [[UILabel alloc] init];
+    dynamicLabel.text = YSSLocalized(@"DYNAMIC_THRESHOLD");
+    dynamicLabel.font = [UIFont systemFontOfSize:14];
+    dynamicLabel.textColor = [UIColor lightGrayColor];
+    dynamicLabel.translatesAutoresizingMaskIntoConstraints = NO;
+    [containerView addSubview:dynamicLabel];
+    
+    self.dynamicThresholdSwitch = [[UISwitch alloc] init];
+    self.dynamicThresholdSwitch.on = manager.dynamicThreshold;
+    self.dynamicThresholdSwitch.onTintColor = [UIColor systemGreenColor];
+    [self.dynamicThresholdSwitch addTarget:self action:@selector(dynamicThresholdToggled:) forControlEvents:UIControlEventValueChanged];
+    self.dynamicThresholdSwitch.translatesAutoresizingMaskIntoConstraints = NO;
+    [containerView addSubview:self.dynamicThresholdSwitch];
+    
+    // Layout constraints
+    [NSLayoutConstraint activateConstraints:@[
+        // Container
+        [containerView.centerXAnchor constraintEqualToAnchor:self.view.centerXAnchor],
+        [containerView.centerYAnchor constraintEqualToAnchor:self.view.centerYAnchor],
+        [containerView.widthAnchor constraintEqualToConstant:320],
         
-        UIAlertAction *action = [UIAlertAction actionWithTitle:title
-                                                         style:UIAlertActionStyleDefault
-                                                       handler:^(UIAlertAction *a) {
-            manager.playbackSpeed = [speed floatValue];
-            [manager saveSettings];
-            showSettingsPopup(presenter); // Re-show to update selection
-        }];
-        [alert addAction:action];
+        // Title
+        [titleLabel.topAnchor constraintEqualToAnchor:containerView.topAnchor constant:16],
+        [titleLabel.centerXAnchor constraintEqualToAnchor:containerView.centerXAnchor],
+        
+        // Close button
+        [closeButton.topAnchor constraintEqualToAnchor:containerView.topAnchor constant:12],
+        [closeButton.trailingAnchor constraintEqualToAnchor:containerView.trailingAnchor constant:-12],
+        [closeButton.widthAnchor constraintEqualToConstant:30],
+        [closeButton.heightAnchor constraintEqualToConstant:30],
+        
+        // Playback Speed
+        [playbackTitleLabel.topAnchor constraintEqualToAnchor:titleLabel.bottomAnchor constant:24],
+        [playbackTitleLabel.leadingAnchor constraintEqualToAnchor:containerView.leadingAnchor constant:16],
+        
+        [self.playbackSpeedLabel.centerYAnchor constraintEqualToAnchor:playbackTitleLabel.centerYAnchor],
+        [self.playbackSpeedLabel.trailingAnchor constraintEqualToAnchor:containerView.trailingAnchor constant:-16],
+        
+        [self.playbackSpeedSlider.topAnchor constraintEqualToAnchor:playbackTitleLabel.bottomAnchor constant:8],
+        [self.playbackSpeedSlider.leadingAnchor constraintEqualToAnchor:containerView.leadingAnchor constant:16],
+        [self.playbackSpeedSlider.trailingAnchor constraintEqualToAnchor:containerView.trailingAnchor constant:-16],
+        
+        // Silence Speed
+        [silenceTitleLabel.topAnchor constraintEqualToAnchor:self.playbackSpeedSlider.bottomAnchor constant:20],
+        [silenceTitleLabel.leadingAnchor constraintEqualToAnchor:containerView.leadingAnchor constant:16],
+        
+        [self.silenceSpeedLabel.centerYAnchor constraintEqualToAnchor:silenceTitleLabel.centerYAnchor],
+        [self.silenceSpeedLabel.trailingAnchor constraintEqualToAnchor:containerView.trailingAnchor constant:-16],
+        
+        [self.silenceSpeedSlider.topAnchor constraintEqualToAnchor:silenceTitleLabel.bottomAnchor constant:8],
+        [self.silenceSpeedSlider.leadingAnchor constraintEqualToAnchor:containerView.leadingAnchor constant:16],
+        [self.silenceSpeedSlider.trailingAnchor constraintEqualToAnchor:containerView.trailingAnchor constant:-16],
+        
+        // Volume Threshold
+        [thresholdTitleLabel.topAnchor constraintEqualToAnchor:self.silenceSpeedSlider.bottomAnchor constant:20],
+        [thresholdTitleLabel.leadingAnchor constraintEqualToAnchor:containerView.leadingAnchor constant:16],
+        
+        [self.thresholdLabel.centerYAnchor constraintEqualToAnchor:thresholdTitleLabel.centerYAnchor],
+        [self.thresholdLabel.trailingAnchor constraintEqualToAnchor:containerView.trailingAnchor constant:-16],
+        
+        // Audio Visualizer
+        [self.audioVisualizerView.topAnchor constraintEqualToAnchor:thresholdTitleLabel.bottomAnchor constant:8],
+        [self.audioVisualizerView.leadingAnchor constraintEqualToAnchor:containerView.leadingAnchor constant:16],
+        [self.audioVisualizerView.trailingAnchor constraintEqualToAnchor:containerView.trailingAnchor constant:-16],
+        [self.audioVisualizerView.heightAnchor constraintEqualToConstant:40],
+        
+        // Audio Level Bar
+        [self.audioLevelBar.leadingAnchor constraintEqualToAnchor:self.audioVisualizerView.leadingAnchor],
+        [self.audioLevelBar.topAnchor constraintEqualToAnchor:self.audioVisualizerView.topAnchor],
+        [self.audioLevelBar.bottomAnchor constraintEqualToAnchor:self.audioVisualizerView.bottomAnchor],
+        
+        // Threshold Line
+        [self.thresholdLine.topAnchor constraintEqualToAnchor:self.audioVisualizerView.topAnchor],
+        [self.thresholdLine.bottomAnchor constraintEqualToAnchor:self.audioVisualizerView.bottomAnchor],
+        [self.thresholdLine.widthAnchor constraintEqualToConstant:3],
+        
+        [self.thresholdSlider.topAnchor constraintEqualToAnchor:self.audioVisualizerView.bottomAnchor constant:8],
+        [self.thresholdSlider.leadingAnchor constraintEqualToAnchor:containerView.leadingAnchor constant:16],
+        [self.thresholdSlider.trailingAnchor constraintEqualToAnchor:containerView.trailingAnchor constant:-16],
+        
+        // Dynamic Threshold
+        [dynamicLabel.topAnchor constraintEqualToAnchor:self.thresholdSlider.bottomAnchor constant:20],
+        [dynamicLabel.leadingAnchor constraintEqualToAnchor:containerView.leadingAnchor constant:16],
+        [dynamicLabel.bottomAnchor constraintEqualToAnchor:containerView.bottomAnchor constant:-20],
+        
+        [self.dynamicThresholdSwitch.centerYAnchor constraintEqualToAnchor:dynamicLabel.centerYAnchor],
+        [self.dynamicThresholdSwitch.trailingAnchor constraintEqualToAnchor:containerView.trailingAnchor constant:-16],
+    ]];
+    
+    // Start visualizer timer
+    [self startVisualizerTimer];
+    
+    // Tap gesture to dismiss when tapping outside
+    UITapGestureRecognizer *tapGesture = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(handleBackgroundTap:)];
+    tapGesture.cancelsTouchesInView = NO;
+    [self.view addGestureRecognizer:tapGesture];
+}
+
+- (void)viewDidLayoutSubviews {
+    [super viewDidLayoutSubviews];
+    [self updateVisualizerLayout];
+}
+
+- (void)startVisualizerTimer {
+    self.visualizerTimer = [NSTimer scheduledTimerWithTimeInterval:0.05 
+                                                            target:self 
+                                                          selector:@selector(updateVisualizer) 
+                                                          userInfo:nil 
+                                                           repeats:YES];
+}
+
+- (void)updateVisualizer {
+    YouSkipSilenceManager *manager = [YouSkipSilenceManager sharedManager];
+    float currentVolume = manager.currentVolume;
+    float threshold = manager.silenceThreshold;
+    
+    // Update audio level bar width based on current volume (0-100 scale)
+    CGFloat maxWidth = self.audioVisualizerView.bounds.size.width;
+    CGFloat levelWidth = (currentVolume / 100.0) * maxWidth;
+    
+    // Animate the level bar
+    [UIView animateWithDuration:0.05 animations:^{
+        CGRect frame = self.audioLevelBar.frame;
+        frame.size.width = levelWidth;
+        self.audioLevelBar.frame = frame;
+        
+        // Change color based on whether we're above or below threshold
+        if (currentVolume < threshold) {
+            self.audioLevelBar.backgroundColor = [UIColor systemOrangeColor]; // Below threshold (silence)
+        } else {
+            self.audioLevelBar.backgroundColor = [UIColor systemGreenColor]; // Above threshold (sound)
+        }
+    }];
+}
+
+- (void)updateVisualizerLayout {
+    YouSkipSilenceManager *manager = [YouSkipSilenceManager sharedManager];
+    
+    // Update threshold line position
+    CGFloat maxWidth = self.audioVisualizerView.bounds.size.width;
+    CGFloat thresholdX = (manager.silenceThreshold / 100.0) * maxWidth;
+    
+    CGRect thresholdFrame = self.thresholdLine.frame;
+    thresholdFrame.origin.x = thresholdX - 1.5; // Center the line
+    self.thresholdLine.frame = thresholdFrame;
+}
+
+- (void)handleBackgroundTap:(UITapGestureRecognizer *)gesture {
+    CGPoint location = [gesture locationInView:self.view];
+    UIView *containerView = self.view.subviews.firstObject;
+    if (containerView && !CGRectContainsPoint(containerView.frame, location)) {
+        [self dismissSettings];
     }
+}
+
+- (void)playbackSpeedChanged:(UISlider *)slider {
+    YouSkipSilenceManager *manager = [YouSkipSilenceManager sharedManager];
+    float roundedValue = roundf(slider.value * 10) / 10.0; // Round to 1 decimal
+    manager.playbackSpeed = roundedValue;
+    self.playbackSpeedLabel.text = [NSString stringWithFormat:@"%.1fx", roundedValue];
+    [manager saveSettings];
+}
+
+- (void)silenceSpeedChanged:(UISlider *)slider {
+    YouSkipSilenceManager *manager = [YouSkipSilenceManager sharedManager];
+    float roundedValue = roundf(slider.value * 10) / 10.0; // Round to 1 decimal
+    manager.silenceSpeed = roundedValue;
+    self.silenceSpeedLabel.text = [NSString stringWithFormat:@"%.1fx", roundedValue];
+    [manager saveSettings];
+}
+
+- (void)thresholdChanged:(UISlider *)slider {
+    YouSkipSilenceManager *manager = [YouSkipSilenceManager sharedManager];
+    manager.silenceThreshold = slider.value;
+    self.thresholdLabel.text = [NSString stringWithFormat:@"%.0f%%", slider.value];
+    [manager saveSettings];
+    [self updateVisualizerLayout];
+}
+
+- (void)dynamicThresholdToggled:(UISwitch *)switchControl {
+    YouSkipSilenceManager *manager = [YouSkipSilenceManager sharedManager];
+    manager.dynamicThreshold = switchControl.on;
+    [manager saveSettings];
     
-    // Custom playback speed
-    UIAlertAction *customPlayback = [UIAlertAction actionWithTitle:[NSString stringWithFormat:@"%@ (%@)", 
-                                                                    YSSLocalized(@"PLAYBACK_SPEED"), 
-                                                                    YSSLocalized(@"CUSTOM_SPEED")]
-                                                             style:UIAlertActionStyleDefault
-                                                           handler:^(UIAlertAction *a) {
-        UIAlertController *customAlert = [UIAlertController alertControllerWithTitle:YSSLocalized(@"ENTER_CUSTOM_SPEED")
-                                                                             message:nil
-                                                                      preferredStyle:UIAlertControllerStyleAlert];
-        [customAlert addTextFieldWithConfigurationHandler:^(UITextField *textField) {
-            textField.placeholder = @"1.1";
-            textField.keyboardType = UIKeyboardTypeDecimalPad;
-            textField.text = [NSString stringWithFormat:@"%.1f", manager.playbackSpeed];
-        }];
-        
-        UIAlertAction *done = [UIAlertAction actionWithTitle:YSSLocalized(@"DONE")
-                                                       style:UIAlertActionStyleDefault
-                                                     handler:^(UIAlertAction *action) {
-            NSString *text = customAlert.textFields.firstObject.text;
-            float speed = [text floatValue];
-            if (speed >= 0.5f && speed <= 4.0f) {
-                manager.playbackSpeed = speed;
-                [manager saveSettings];
-            }
-        }];
-        
-        UIAlertAction *cancel = [UIAlertAction actionWithTitle:YSSLocalized(@"CANCEL")
-                                                         style:UIAlertActionStyleCancel
-                                                       handler:nil];
-        
-        [customAlert addAction:done];
-        [customAlert addAction:cancel];
-        [presenter presentViewController:customAlert animated:YES completion:nil];
-    }];
-    [alert addAction:customPlayback];
-    
-    // Separator-like divider
-    UIAlertAction *divider = [UIAlertAction actionWithTitle:@"────────────"
-                                                      style:UIAlertActionStyleDefault
-                                                    handler:nil];
-    divider.enabled = NO;
-    [alert addAction:divider];
-    
-    // Silence Speed options
-    NSArray *silenceSpeeds = @[@1.5, @2.0, @2.5, @3.0, @4.0];
-    for (NSNumber *speed in silenceSpeeds) {
-        NSString *title = [NSString stringWithFormat:@"%@ %.1fx%@", 
-                          YSSLocalized(@"SILENCE_SPEED"), 
-                          [speed floatValue],
-                          (fabsf(manager.silenceSpeed - [speed floatValue]) < 0.01f) ? @" ✓" : @""];
-        
-        UIAlertAction *action = [UIAlertAction actionWithTitle:title
-                                                         style:UIAlertActionStyleDefault
-                                                       handler:^(UIAlertAction *a) {
-            manager.silenceSpeed = [speed floatValue];
-            [manager saveSettings];
-            showSettingsPopup(presenter); // Re-show to update selection
-        }];
-        [alert addAction:action];
-    }
-    
-    // Custom silence speed
-    UIAlertAction *customSilence = [UIAlertAction actionWithTitle:[NSString stringWithFormat:@"%@ (%@)", 
-                                                                   YSSLocalized(@"SILENCE_SPEED"), 
-                                                                   YSSLocalized(@"CUSTOM_SPEED")]
-                                                            style:UIAlertActionStyleDefault
-                                                          handler:^(UIAlertAction *a) {
-        UIAlertController *customAlert = [UIAlertController alertControllerWithTitle:YSSLocalized(@"ENTER_CUSTOM_SPEED")
-                                                                             message:nil
-                                                                      preferredStyle:UIAlertControllerStyleAlert];
-        [customAlert addTextFieldWithConfigurationHandler:^(UITextField *textField) {
-            textField.placeholder = @"2.0";
-            textField.keyboardType = UIKeyboardTypeDecimalPad;
-            textField.text = [NSString stringWithFormat:@"%.1f", manager.silenceSpeed];
-        }];
-        
-        UIAlertAction *done = [UIAlertAction actionWithTitle:YSSLocalized(@"DONE")
-                                                       style:UIAlertActionStyleDefault
-                                                     handler:^(UIAlertAction *action) {
-            NSString *text = customAlert.textFields.firstObject.text;
-            float speed = [text floatValue];
-            if (speed >= 0.5f && speed <= 16.0f) {
-                manager.silenceSpeed = speed;
-                [manager saveSettings];
-            }
-        }];
-        
-        UIAlertAction *cancel = [UIAlertAction actionWithTitle:YSSLocalized(@"CANCEL")
-                                                         style:UIAlertActionStyleCancel
-                                                       handler:nil];
-        
-        [customAlert addAction:done];
-        [customAlert addAction:cancel];
-        [presenter presentViewController:customAlert animated:YES completion:nil];
-    }];
-    [alert addAction:customSilence];
-    
-    // Dynamic threshold toggle
-    NSString *dynamicTitle = [NSString stringWithFormat:@"%@ %@",
-                             YSSLocalized(@"DYNAMIC_THRESHOLD"),
-                             manager.dynamicThreshold ? @"✓" : @""];
-    UIAlertAction *dynamicAction = [UIAlertAction actionWithTitle:dynamicTitle
-                                                            style:UIAlertActionStyleDefault
-                                                          handler:^(UIAlertAction *a) {
-        manager.dynamicThreshold = !manager.dynamicThreshold;
-        [manager saveSettings];
-        showSettingsPopup(presenter);
-    }];
-    [alert addAction:dynamicAction];
-    
-    // Divider before stats
-    UIAlertAction *divider2 = [UIAlertAction actionWithTitle:@"────────────"
-                                                       style:UIAlertActionStyleDefault
-                                                     handler:nil];
-    divider2.enabled = NO;
-    [alert addAction:divider2];
-    
-    // Time saved stats (display only, not clickable)
-    NSTimeInterval currentVideoSaved = manager.currentVideoTimeSaved;
-    NSString *currentVideoTitle = [NSString stringWithFormat:@"⏱ %@: %@",
-                                   YSSLocalized(@"CURRENT_VIDEO_SAVED"),
-                                   [manager formattedTimeSaved:currentVideoSaved]];
-    UIAlertAction *currentVideoAction = [UIAlertAction actionWithTitle:currentVideoTitle
-                                                                 style:UIAlertActionStyleDefault
-                                                               handler:nil];
-    currentVideoAction.enabled = NO;
-    [alert addAction:currentVideoAction];
-    
-    NSTimeInterval lastVideoSaved = manager.lastVideoTimeSaved;
-    NSString *lastVideoTitle = [NSString stringWithFormat:@"⏱ %@: %@",
-                                YSSLocalized(@"LAST_VIDEO_SAVED"),
-                                [manager formattedTimeSaved:lastVideoSaved]];
-    UIAlertAction *lastVideoAction = [UIAlertAction actionWithTitle:lastVideoTitle
-                                                              style:UIAlertActionStyleDefault
-                                                            handler:nil];
-    lastVideoAction.enabled = NO;
-    [alert addAction:lastVideoAction];
-    
-    NSTimeInterval totalSaved = manager.totalTimeSaved;
-    NSString *totalTitle = [NSString stringWithFormat:@"⏱ %@: %@",
-                            YSSLocalized(@"TOTAL_TIME_SAVED"),
-                            [manager formattedTimeSaved:totalSaved]];
-    UIAlertAction *totalAction = [UIAlertAction actionWithTitle:totalTitle
-                                                          style:UIAlertActionStyleDefault
-                                                        handler:nil];
-    totalAction.enabled = NO;
-    [alert addAction:totalAction];
-    
-    // Reset time saved option
-    UIAlertAction *resetAction = [UIAlertAction actionWithTitle:YSSLocalized(@"RESET_TIME_SAVED")
-                                                          style:UIAlertActionStyleDestructive
-                                                        handler:^(UIAlertAction *a) {
-        [manager resetTimeSaved];
-        showSettingsPopup(presenter);
-    }];
-    [alert addAction:resetAction];
-    
-    // Cancel
-    UIAlertAction *cancel = [UIAlertAction actionWithTitle:YSSLocalized(@"CANCEL")
-                                                     style:UIAlertActionStyleCancel
-                                                   handler:nil];
-    [alert addAction:cancel];
-    
-    // iPad support
-    UIPopoverPresentationController *popover = alert.popoverPresentationController;
-    if (popover) {
-        popover.sourceView = presenter.view;
-        popover.sourceRect = presenter.view.bounds;
-        popover.permittedArrowDirections = 0;
-    }
-    
-    [presenter presentViewController:alert animated:YES completion:nil];
+    // Enable/disable threshold slider based on dynamic threshold state
+    self.thresholdSlider.enabled = !switchControl.on;
+    self.thresholdSlider.alpha = switchControl.on ? 0.5 : 1.0;
+}
+
+- (void)dismissSettings {
+    [self.visualizerTimer invalidate];
+    self.visualizerTimer = nil;
+    [self dismissViewControllerAnimated:YES completion:nil];
+}
+
+- (void)dealloc {
+    [self.visualizerTimer invalidate];
+}
+
+@end
+
+static void showSettingsPopup(UIViewController *presenter) {
+    YouSkipSilenceSettingsViewController *settingsVC = [[YouSkipSilenceSettingsViewController alloc] init];
+    settingsVC.modalPresentationStyle = UIModalPresentationOverCurrentContext;
+    settingsVC.modalTransitionStyle = UIModalTransitionStyleCrossDissolve;
+    [presenter presentViewController:settingsVC animated:YES completion:nil];
 }
 
 #pragma mark - Main Hooks
@@ -726,6 +877,20 @@ static void showSettingsPopup(UIViewController *presenter) {
 
 #pragma mark - Top Overlay Button
 
+static void addLongPressGestureToButton(YTQTMButton *button, id target, SEL selector) {
+    if (button) {
+        // Remove existing long press gestures to avoid duplicates
+        for (UIGestureRecognizer *gesture in button.gestureRecognizers) {
+            if ([gesture isKindOfClass:[UILongPressGestureRecognizer class]]) {
+                [button removeGestureRecognizer:gesture];
+            }
+        }
+        UILongPressGestureRecognizer *longPress = [[UILongPressGestureRecognizer alloc] initWithTarget:target action:selector];
+        longPress.minimumPressDuration = 0.5;
+        [button addGestureRecognizer:longPress];
+    }
+}
+
 %group Top
 %hook YTMainAppControlsOverlayView
 
@@ -735,6 +900,14 @@ static void showSettingsPopup(UIViewController *presenter) {
         return skipSilenceImage(@"3", manager.isEnabled);
     }
     return %orig;
+}
+
+- (void)setTopOverlayVisible:(BOOL)visible isAutonavCanceledState:(BOOL)canceledState {
+    %orig;
+    // Add long press gesture when button becomes visible
+    if (visible && self.overlayButtons[TweakKey]) {
+        addLongPressGestureToButton(self.overlayButtons[TweakKey], self, @selector(didLongPressYouSkipSilence:));
+    }
 }
 
 %new(v@:@)
@@ -748,6 +921,18 @@ static void showSettingsPopup(UIViewController *presenter) {
         // Update button image
         YouSkipSilenceManager *manager = [YouSkipSilenceManager sharedManager];
         [self.overlayButtons[TweakKey] setImage:skipSilenceImage(@"3", manager.isEnabled) forState:UIControlStateNormal];
+    }
+}
+
+%new(v@:@)
+- (void)didLongPressYouSkipSilence:(UILongPressGestureRecognizer *)gesture {
+    if (gesture.state == UIGestureRecognizerStateBegan) {
+        YTMainAppVideoPlayerOverlayView *mainOverlayView = (YTMainAppVideoPlayerOverlayView *)self.superview;
+        YTMainAppVideoPlayerOverlayViewController *mainOverlayController = (YTMainAppVideoPlayerOverlayViewController *)mainOverlayView.delegate;
+        YTPlayerViewController *playerViewController = mainOverlayController.parentViewController;
+        if (playerViewController) {
+            [playerViewController didLongPressYouSkipSilence];
+        }
     }
 }
 
@@ -767,6 +952,14 @@ static void showSettingsPopup(UIViewController *presenter) {
     return %orig;
 }
 
+- (void)updateIconVisibility {
+    %orig;
+    // Add long press gesture when button becomes visible
+    if (self.overlayButtons[TweakKey]) {
+        addLongPressGestureToButton(self.overlayButtons[TweakKey], self, @selector(didLongPressYouSkipSilence:));
+    }
+}
+
 %new(v@:@)
 - (void)didPressYouSkipSilence:(id)arg {
     YTInlinePlayerBarController *delegate = self.delegate;
@@ -778,6 +971,18 @@ static void showSettingsPopup(UIViewController *presenter) {
         // Update button image
         YouSkipSilenceManager *manager = [YouSkipSilenceManager sharedManager];
         [self.overlayButtons[TweakKey] setImage:skipSilenceImage(@"3", manager.isEnabled) forState:UIControlStateNormal];
+    }
+}
+
+%new(v@:@)
+- (void)didLongPressYouSkipSilence:(UILongPressGestureRecognizer *)gesture {
+    if (gesture.state == UIGestureRecognizerStateBegan) {
+        YTInlinePlayerBarController *delegate = self.delegate;
+        YTMainAppVideoPlayerOverlayViewController *_delegate = [delegate valueForKey:@"_delegate"];
+        YTPlayerViewController *parentViewController = _delegate.parentViewController;
+        if (parentViewController) {
+            [parentViewController didLongPressYouSkipSilence];
+        }
     }
 }
 

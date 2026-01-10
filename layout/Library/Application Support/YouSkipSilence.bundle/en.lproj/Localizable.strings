@@ -6,6 +6,7 @@
 "SETTINGS_TITLE" = "Skip Silence Settings";
 "PLAYBACK_SPEED" = "Playback Speed";
 "SILENCE_SPEED" = "Silence Speed";
+"VOLUME_THRESHOLD" = "Volume Threshold";
 "DYNAMIC_THRESHOLD" = "Dynamic Threshold";
 "CUSTOM_SPEED" = "Custom";
 "CANCEL" = "Cancel";
