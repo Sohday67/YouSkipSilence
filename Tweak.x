@@ -39,6 +39,12 @@ static const int kSamplesThreshold = 10;
 // Forward declarations
 @class YouSkipSilenceManager;
 
+// MLHAMQueuePlayer method declarations for rate control
+@interface MLHAMQueuePlayer (YouSkipSilence)
+- (void)setRate:(float)rate;
+- (void)internalSetRate;
+@end
+
 @interface YTMainAppVideoPlayerOverlayViewController (YouSkipSilence)
 @property (nonatomic, assign) YTPlayerViewController *parentViewController;
 @end
