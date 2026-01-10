@@ -16,6 +16,8 @@
 #import <YouTubeHeader/YTSettingsSectionItem.h>
 #import <YouTubeHeader/YTSettingsSectionItemManager.h>
 #import <YouTubeHeader/YTSettingsViewController.h>
+#import <YouTubeHeader/MLHAMQueuePlayer.h>
+#import <YouTubeHeader/MLHAMPlayerItemSegment.h>
 
 #import <YTVideoOverlay/Header.h>
 #import <YTVideoOverlay/Init.x>
@@ -71,7 +73,66 @@ static const int kSamplesThreshold = 10;
 - (void)didLongPressYouSkipSilence:(UILongPressGestureRecognizer *)gesture;
 @end
 
+#pragma mark - Audio Processing Tap Callbacks
+
+// Forward declaration for manager
+@class YouSkipSilenceManager;
+static void updateAudioLevel(float level);
+
+static void tapInit(MTAudioProcessingTapRef tap, void *clientInfo, void **tapStorageOut) {
+    *tapStorageOut = clientInfo;
+}
+
+static void tapFinalize(MTAudioProcessingTapRef tap) {
+    // Cleanup if needed
+}
+
+static void tapPrepare(MTAudioProcessingTapRef tap, CMItemCount maxFrames, const AudioStreamBasicDescription *processingFormat) {
+    // Prepare for processing
+}
+
+static void tapUnprepare(MTAudioProcessingTapRef tap) {
+    // Cleanup after processing
+}
+
+static void tapProcess(MTAudioProcessingTapRef tap, CMItemCount numberFrames, MTAudioProcessingTapFlags flags, AudioBufferList *bufferListInOut, CMItemCount *numberFramesOut, MTAudioProcessingTapFlags *flagsOut) {
+    OSStatus status = MTAudioProcessingTapGetSourceAudio(tap, numberFrames, bufferListInOut, flagsOut, NULL, numberFramesOut);
+    if (status != noErr) return;
+    
+    // Calculate RMS (Root Mean Square) volume level
+    float totalSquared = 0;
+    int sampleCount = 0;
+    
+    for (UInt32 i = 0; i < bufferListInOut->mNumberBuffers; i++) {
+        AudioBuffer buffer = bufferListInOut->mBuffers[i];
+        float *samples = (float *)buffer.mData;
+        int frameCount = buffer.mDataByteSize / sizeof(float);
+        
+        for (int j = 0; j < frameCount; j++) {
+            float sample = samples[j];
+            totalSquared += sample * sample;
+            sampleCount++;
+        }
+    }
+    
+    if (sampleCount > 0) {
+        float rms = sqrtf(totalSquared / sampleCount);
+        // Convert to percentage (0-100 scale)
+        // Audio samples are typically -1 to 1, so RMS of 0.1 is fairly quiet
+        float level = rms * 500; // Scale up for visibility
+        level = fminf(100, fmaxf(0, level));
+        
+        // Update manager on main thread
+        dispatch_async(dispatch_get_main_queue(), ^{
+            updateAudioLevel(level);
+        });
+    }
+}
+
 #pragma mark - YouSkipSilenceManager
+
+// Global reference to the YouTube queue player for speed control
+static MLHAMQueuePlayer *g_queuePlayer = nil;
 
 @interface YouSkipSilenceManager : NSObject
 
@@ -93,6 +154,8 @@ static const int kSamplesThreshold = 10;
 @property (nonatomic, assign) NSTimeInterval currentVideoTimeSaved;
 @property (nonatomic, strong) NSString *lastVideoID;
 @property (nonatomic, assign) CFTimeInterval lastSpeedUpTime;
+@property (nonatomic, assign) float peakLevel;
+@property (nonatomic, assign) float averageLevel;
 
 + (instancetype)sharedManager;
 - (void)toggle;
@@ -103,6 +166,7 @@ static const int kSamplesThreshold = 10;
 - (void)resetTimeSaved;
 - (NSString *)formattedTimeSaved:(NSTimeInterval)seconds;
 - (void)updateVideoID:(NSString *)videoID;
+- (void)setRate:(float)rate;
 
 @end
 
@@ -128,7 +192,9 @@ static const int kSamplesThreshold = 10;
         _dynamicThreshold = YES; // Enabled by default
         _samplesUnderThreshold = 0;
         _previousSamples = [NSMutableArray array];
-        _currentVolume = 0;
+        _currentVolume = 50; // Start with middle value for visualization
+        _peakLevel = 0;
+        _averageLevel = 0;
         _totalTimeSaved = 0;
         _lastVideoTimeSaved = 0;
         _currentVideoTimeSaved = 0;
@@ -172,18 +238,27 @@ static const int kSamplesThreshold = 10;
     [defaults synchronize];
 }
 
+- (void)setRate:(float)rate {
+    // Use YouTube's MLHAMQueuePlayer for rate control
+    if (g_queuePlayer) {
+        [g_queuePlayer setRate:rate];
+    } else if (_currentPlayer) {
+        // Fallback to AVPlayer if queue player not available
+        _currentPlayer.rate = rate;
+    }
+}
+
 - (void)toggle {
     _isEnabled = !_isEnabled;
     [self saveSettings];
     
     if (!_isEnabled) {
         [self detach];
-        if (_currentPlayer) {
-            _currentPlayer.rate = 1.0f;
-        }
+        // Reset to normal speed
+        [self setRate:1.0f];
         _isSpedUp = NO;
         _samplesUnderThreshold = 0;
-    } else if (_currentPlayer) {
+    } else {
         [self startAnalysis];
     }
 }
@@ -196,6 +271,7 @@ static const int kSamplesThreshold = 10;
     
     if (_isEnabled) {
         [self startAnalysis];
+        [self setupAudioTap];
     }
 }
 
@@ -204,6 +280,57 @@ static const int kSamplesThreshold = 10;
     _analysisTimer = nil;
     _isSpedUp = NO;
     _samplesUnderThreshold = 0;
+    [self removeAudioTap];
+}
+
+- (void)setupAudioTap {
+    // Setup audio tap for real audio level detection
+    if (!_currentPlayer || !_currentPlayer.currentItem) return;
+    
+    AVPlayerItem *item = _currentPlayer.currentItem;
+    NSArray *audioTracks = [item.asset tracksWithMediaType:AVMediaTypeAudio];
+    if (audioTracks.count == 0) return;
+    
+    // Create audio mix for metering
+    AVMutableAudioMix *audioMix = [AVMutableAudioMix audioMix];
+    NSMutableArray *inputParameters = [NSMutableArray array];
+    
+    for (AVAssetTrack *track in audioTracks) {
+        AVMutableAudioMixInputParameters *params = [AVMutableAudioMixInputParameters audioMixInputParametersWithTrack:track];
+        
+        // Setup MTAudioProcessingTap for audio level metering
+        MTAudioProcessingTapCallbacks callbacks;
+        callbacks.version = kMTAudioProcessingTapCallbacksVersion_0;
+        callbacks.clientInfo = (__bridge void *)self;
+        callbacks.init = tapInit;
+        callbacks.finalize = tapFinalize;
+        callbacks.prepare = tapPrepare;
+        callbacks.unprepare = tapUnprepare;
+        callbacks.process = tapProcess;
+        
+        MTAudioProcessingTapRef tap;
+        OSStatus status = MTAudioProcessingTapCreate(kCFAllocatorDefault, &callbacks, kMTAudioProcessingTapCreationFlag_PreEffects, &tap);
+        
+        if (status == noErr && tap) {
+            params.audioTapProcessor = tap;
+            _audioTap = tap;
+            CFRelease(tap);
+        }
+        
+        [inputParameters addObject:params];
+    }
+    
+    audioMix.inputParameters = inputParameters;
+    item.audioMix = audioMix;
+    _audioMix = audioMix;
+}
+
+- (void)removeAudioTap {
+    if (_currentPlayer.currentItem) {
+        _currentPlayer.currentItem.audioMix = nil;
+    }
+    _audioMix = nil;
+    _audioTap = NULL;
 }
 
 - (void)startAnalysis {
@@ -253,86 +380,9 @@ static const int kSamplesThreshold = 10;
 }
 
 - (float)calculateCurrentVolume {
-    /*
-     * Audio Volume Detection for Silence Skipping
-     * 
-     * Note: iOS has restrictions on real-time audio analysis from AVPlayer.
-     * The ideal implementation would use MTAudioProcessingTap, but this requires
-     * complex setup and may not work with DRM-protected content on YouTube.
-     * 
-     * Alternative approaches that could be implemented:
-     * 1. MTAudioProcessingTap - Most accurate but complex and may conflict with DRM
-     * 2. AVAudioEngine with AVAudioPlayerNode - Requires audio extraction
-     * 3. Accelerate framework with vDSP - For processing audio buffers
-     * 
-     * Current implementation uses a heuristic approach that can be extended
-     * to use actual audio metering when the player's audio tap is accessible.
-     */
-    
-    AVPlayerItem *item = _currentPlayer.currentItem;
-    if (!item) return 100;
-    
-    // Check if we have audio tracks
-    NSArray *audioTracks = [item.asset tracksWithMediaType:AVMediaTypeAudio];
-    if (audioTracks.count == 0) return 100;
-    
-    // Check if video is paused or seeking - don't analyze during these states
-    if (_currentPlayer.timeControlStatus != AVPlayerTimeControlStatusPlaying) {
-        return 100; // Return high volume to prevent speed changes during non-playback
-    }
-    
-    // Attempt to access audio level meters if available through KVO
-    // This provides a baseline implementation that can be extended
-    // when more advanced audio APIs become accessible
-    
-    // For AVPlayer, we can observe the volume property changes
-    // and use rate changes as indicators of playback state
-    float playerVolume = _currentPlayer.volume;
-    if (playerVolume < 0.1f) {
-        // Player is muted or very low volume, don't skip
-        return 100;
-    }
-    
-    // Use the audio mix to try to get volume information
-    // This checks if there's an audio mix applied to the player item
-    AVAudioMix *currentMix = item.audioMix;
-    if (currentMix) {
-        // Audio mix is present, indicating audio processing is active
-        // This can be used as a baseline for silence detection
-    }
-    
-    // Fallback: Use a time-based heuristic approach
-    // This creates a pattern that can help identify potential silence periods
-    // In a production environment, this should be replaced with actual
-    // audio level metering through MTAudioProcessingTap
-    
-    static float smoothedVolume = 50;
-    static int consecutiveLowSamples = 0;
-    
-    // Check playback position to detect potential silence at video boundaries
-    CMTime currentPlayTime = _currentPlayer.currentTime;
-    CMTime duration = item.duration;
-    
-    if (CMTIME_IS_VALID(currentPlayTime) && CMTIME_IS_VALID(duration)) {
-        Float64 currentSeconds = CMTimeGetSeconds(currentPlayTime);
-        Float64 durationSeconds = CMTimeGetSeconds(duration);
-        
-        // Near the start or end of video, often has silent parts
-        if (currentSeconds < 2.0 || currentSeconds > (durationSeconds - 5.0)) {
-            consecutiveLowSamples++;
-            if (consecutiveLowSamples > 5) {
-                smoothedVolume = MAX(10, smoothedVolume - 5);
-            }
-        } else {
-            consecutiveLowSamples = 0;
-            smoothedVolume = MIN(60, smoothedVolume + 2);
-        }
-    }
-    
-    // Apply smoothing to prevent rapid fluctuations
-    smoothedVolume = MAX(10, MIN(100, smoothedVolume));
-    
-    return smoothedVolume;
+    // Return the current volume level set by the audio processing tap
+    // This is updated in real-time by the tapProcess callback
+    return _currentVolume;
 }
 
 - (void)updateDynamicThreshold:(float)volume {
@@ -365,16 +415,12 @@ static const int kSamplesThreshold = 10;
 }
 
 - (void)speedUp {
-    if (!_currentPlayer) return;
-    
     _isSpedUp = YES;
     _lastSpeedUpTime = CACurrentMediaTime();
-    _currentPlayer.rate = _silenceSpeed;
+    [self setRate:_silenceSpeed];
 }
 
 - (void)slowDown {
-    if (!_currentPlayer) return;
-    
     // Calculate time saved during this sped-up period
     if (_isSpedUp && _lastSpeedUpTime > 0) {
         CFTimeInterval spedUpDuration = CACurrentMediaTime() - _lastSpeedUpTime;
@@ -403,7 +449,7 @@ static const int kSamplesThreshold = 10;
     if (fabsf(speed - 1.0f) < 0.01f) {
         speed = 1.01f;
     }
-    _currentPlayer.rate = speed;
+    [self setRate:speed];
 }
 
 - (void)resetTimeSaved {
@@ -445,6 +491,12 @@ static const int kSamplesThreshold = 10;
 }
 
 @end
+
+// Function called from audio tap to update volume level
+static void updateAudioLevel(float level) {
+    YouSkipSilenceManager *manager = [YouSkipSilenceManager sharedManager];
+    manager.currentVolume = level;
+}
 
 #pragma mark - Bundle & Localization
 
@@ -1080,6 +1132,46 @@ static NSArray *addTimeSavedItemsToSettings(NSArray *items, YTSettingsViewContro
 
 %end
 
+#pragma mark - MLHAMQueuePlayer Hook for Speed Control
+
+%group Player
+
+%hook MLHAMQueuePlayer
+
+- (instancetype)init {
+    self = %orig;
+    if (self) {
+        g_queuePlayer = self;
+    }
+    return self;
+}
+
+- (void)dealloc {
+    if (g_queuePlayer == self) {
+        g_queuePlayer = nil;
+    }
+    %orig;
+}
+
+// Hook setRate to support speeds beyond normal limits for silence skipping
+- (void)setRate:(float)rate {
+    YouSkipSilenceManager *manager = [YouSkipSilenceManager sharedManager];
+    
+    // Allow custom rates when skip silence is active
+    if (manager.isEnabled && (manager.isSpedUp || rate != 1.0f)) {
+        // Directly set the rate bypassing YouTube's restrictions
+        [self setValue:@(rate) forKey:@"_rate"];
+        [self internalSetRate];
+        return;
+    }
+    
+    %orig;
+}
+
+%end
+
+%end
+
 #pragma mark - Constructor
 
 %ctor {
@@ -1109,4 +1201,5 @@ static NSArray *addTimeSavedItemsToSettings(NSArray *items, YTSettingsViewContro
     %init(Top);
     %init(Bottom);
     %init(Settings);
+    %init(Player);
 }
