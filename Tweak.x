@@ -1,7 +1,7 @@
 #import <Foundation/Foundation.h>
 #import <AVFoundation/AVFoundation.h>
 #import <UIKit/UIKit.h>
-#import <MediaToolbox/MTAudioProcessingTap.h>
+#import <ReplayKit/ReplayKit.h>
 #import <rootless.h>
 
 #import <YouTubeHeader/YTColor.h>
@@ -95,68 +95,52 @@ static const int kSamplesThreshold = 10;
 - (void)didLongPressYouSkipSilence:(UILongPressGestureRecognizer *)gesture;
 @end
 
-#pragma mark - Audio Processing Tap Callbacks
+#pragma mark - Screen Recording Audio Capture
 
 // Forward declaration for manager
 @class YouSkipSilenceManager;
 static void updateAudioLevel(float level);
 
-// Audio level tracking using KVO on the player's volume output
-// We'll use a simpler approach - track audio from the video element via the player
+// Audio level tracking using screen recording
 static float g_currentAudioLevel = 50.0f;
-static BOOL g_audioTapSetupDone = NO;
+static BOOL g_screenRecordingActive = NO;
+static RPScreenRecorder *g_screenRecorder = nil;
 
-// MTAudioProcessingTap callbacks for getting real audio levels
-static void tapInit(MTAudioProcessingTapRef tap, void *clientInfo, void **tapStorageOut) {
-    *tapStorageOut = clientInfo;
-}
-
-static void tapFinalize(MTAudioProcessingTapRef tap) {
-    // Cleanup if needed
-}
-
-static void tapPrepare(MTAudioProcessingTapRef tap, CMItemCount maxFrames, const AudioStreamBasicDescription *processingFormat) {
-    // Prepare for processing
-}
-
-static void tapUnprepare(MTAudioProcessingTapRef tap) {
-    // Cleanup after processing
-}
-
-static void tapProcess(MTAudioProcessingTapRef tap, CMItemCount numberFrames, MTAudioProcessingTapFlags flags, AudioBufferList *bufferListInOut, CMItemCount *numberFramesOut, MTAudioProcessingTapFlags *flagsOut) {
-    OSStatus status = MTAudioProcessingTapGetSourceAudio(tap, numberFrames, bufferListInOut, flagsOut, NULL, numberFramesOut);
-    if (status != noErr) return;
+// Calculate RMS from audio buffer
+static float calculateRMSFromAudioBuffer(CMSampleBufferRef sampleBuffer) {
+    if (!sampleBuffer) return 0;
     
-    // Calculate RMS (Root Mean Square) volume level
+    CMBlockBufferRef blockBuffer = CMSampleBufferGetDataBuffer(sampleBuffer);
+    if (!blockBuffer) return 0;
+    
+    size_t length = CMBlockBufferGetDataLength(blockBuffer);
+    if (length == 0) return 0;
+    
+    char *buffer = (char *)malloc(length);
+    if (!buffer) return 0;
+    
+    CMBlockBufferCopyDataBytes(blockBuffer, 0, length, buffer);
+    
+    // Assume 16-bit audio samples
+    int16_t *samples = (int16_t *)buffer;
+    size_t sampleCount = length / sizeof(int16_t);
+    
     float totalSquared = 0;
-    int sampleCount = 0;
-    
-    for (UInt32 i = 0; i < bufferListInOut->mNumberBuffers; i++) {
-        AudioBuffer buffer = bufferListInOut->mBuffers[i];
-        float *samples = (float *)buffer.mData;
-        int frameCount = buffer.mDataByteSize / sizeof(float);
-        
-        for (int j = 0; j < frameCount; j++) {
-            float sample = samples[j];
-            totalSquared += sample * sample;
-            sampleCount++;
-        }
+    for (size_t i = 0; i < sampleCount; i++) {
+        float normalized = samples[i] / 32768.0f; // Normalize 16-bit to -1.0 to 1.0
+        totalSquared += normalized * normalized;
     }
+    
+    free(buffer);
     
     if (sampleCount > 0) {
         float rms = sqrtf(totalSquared / sampleCount);
-        // Convert to percentage (0-100 scale)
-        // Audio samples are typically -1 to 1, so RMS of 0.1 is fairly quiet
-        float level = rms * 500; // Scale up for visibility
-        level = fminf(100, fmaxf(0, level));
-        
-        g_currentAudioLevel = level;
-        
-        // Update manager on main thread
-        dispatch_async(dispatch_get_main_queue(), ^{
-            updateAudioLevel(level);
-        });
+        // Scale to 0-100 range
+        float level = rms * 400; // Scale up for visibility
+        return fminf(100, fmaxf(0, level));
     }
+    
+    return 0;
 }
 
 static float getAudioLevel(void) {
@@ -170,7 +154,7 @@ static MLHAMQueuePlayer *g_queuePlayer = nil;
 // Global reference to the overlay view controller for speed delegate calls
 static __weak YTMainAppVideoPlayerOverlayViewController *g_overlayController = nil;
 
-@interface YouSkipSilenceManager : NSObject
+@interface YouSkipSilenceManager : NSObject <RPScreenRecorderDelegate>
 
 @property (nonatomic, assign) BOOL isEnabled;
 @property (nonatomic, assign) BOOL isSpedUp;
@@ -182,8 +166,6 @@ static __weak YTMainAppVideoPlayerOverlayViewController *g_overlayController = n
 @property (nonatomic, strong) NSMutableArray *previousSamples;
 @property (nonatomic, weak) AVPlayer *currentPlayer;
 @property (nonatomic, strong) NSTimer *analysisTimer;
-@property (nonatomic, strong) AVAudioMix *audioMix;
-@property (nonatomic, assign) MTAudioProcessingTapRef audioTap;
 @property (nonatomic, assign) float currentVolume;
 @property (nonatomic, assign) NSTimeInterval totalTimeSaved;
 @property (nonatomic, assign) NSTimeInterval lastVideoTimeSaved;
@@ -192,6 +174,7 @@ static __weak YTMainAppVideoPlayerOverlayViewController *g_overlayController = n
 @property (nonatomic, assign) CFTimeInterval lastSpeedUpTime;
 @property (nonatomic, assign) float peakLevel;
 @property (nonatomic, assign) float averageLevel;
+@property (nonatomic, assign) BOOL screenRecordingRequested;
 
 + (instancetype)sharedManager;
 - (void)toggle;
@@ -203,6 +186,8 @@ static __weak YTMainAppVideoPlayerOverlayViewController *g_overlayController = n
 - (NSString *)formattedTimeSaved:(NSTimeInterval)seconds;
 - (void)updateVideoID:(NSString *)videoID;
 - (void)setRate:(float)rate;
+- (void)startScreenRecording;
+- (void)stopScreenRecording;
 
 @end
 
@@ -235,6 +220,7 @@ static __weak YTMainAppVideoPlayerOverlayViewController *g_overlayController = n
         _lastVideoTimeSaved = 0;
         _currentVideoTimeSaved = 0;
         _lastSpeedUpTime = 0;
+        _screenRecordingRequested = NO;
         [self loadSettings];
     }
     return self;
@@ -275,47 +261,54 @@ static __weak YTMainAppVideoPlayerOverlayViewController *g_overlayController = n
 }
 
 - (void)setRate:(float)rate {
-    // Primary approach: Use our new method on YTMainAppVideoPlayerOverlayViewController
-    // This mirrors YouSpeed's didChangePlaybackSpeed: which works because `self.delegate`
-    // properly resolves within the controller's context
-    if (g_overlayController && [g_overlayController respondsToSelector:@selector(youSkipSilenceSetRate:)]) {
-        [g_overlayController youSkipSilenceSetRate:rate];
-        return;
+    // APPROACH 1: Use performSelector with the player's setPlaybackRate: method directly
+    // This is similar to how YouSpeed actually changes the rate
+    if (_currentPlayer) {
+        // Try setting rate directly on AVPlayer (this is what actually controls playback)
+        [_currentPlayer setRate:rate];
     }
     
-    // Secondary approach: Try to get the delegate and call directly
-    if (g_overlayController) {
-        // Try property accessor first, then KVC - some YT versions use different patterns
-        id delegate = nil;
+    // APPROACH 2: Also try through MLHAMQueuePlayer which wraps AVPlayer
+    if (g_queuePlayer) {
         @try {
-            delegate = [g_overlayController valueForKey:@"delegate"];
+            // Set the internal rate value
+            [g_queuePlayer setValue:@(rate) forKey:@"_rate"];
+            // Call internal method to apply it
+            if ([g_queuePlayer respondsToSelector:@selector(internalSetRate)]) {
+                [g_queuePlayer internalSetRate];
+            }
         } @catch (NSException *e) {
-            delegate = nil;
-        }
-        
-        if (!delegate) {
+            // Fallback: try setting rate directly
             @try {
-                delegate = [g_overlayController valueForKey:@"_delegate"];
-            } @catch (NSException *e) {
-                delegate = nil;
+                // Some versions have setRate: as a method
+                #pragma clang diagnostic push
+                #pragma clang diagnostic ignored "-Warc-performSelector-leaks"
+                SEL setRateSel = NSSelectorFromString(@"setRate:");
+                if ([g_queuePlayer respondsToSelector:setRateSel]) {
+                    NSMethodSignature *sig = [g_queuePlayer methodSignatureForSelector:setRateSel];
+                    NSInvocation *inv = [NSInvocation invocationWithMethodSignature:sig];
+                    [inv setSelector:setRateSel];
+                    [inv setTarget:g_queuePlayer];
+                    [inv setArgument:&rate atIndex:2];
+                    [inv invoke];
+                }
+                #pragma clang diagnostic pop
+            } @catch (NSException *e2) {
+                // Ignore
             }
         }
-        
-        if (delegate && [delegate respondsToSelector:@selector(varispeedSwitchController:didSelectRate:)]) {
-            [(id <YTVarispeedSwitchControllerDelegate>)delegate varispeedSwitchController:nil didSelectRate:rate];
-            return;
-        }
-        
-        // Also try calling directly on the overlay controller (it may implement the protocol itself)
-        if ([g_overlayController respondsToSelector:@selector(varispeedSwitchController:didSelectRate:)]) {
-            [(id <YTVarispeedSwitchControllerDelegate>)g_overlayController varispeedSwitchController:nil didSelectRate:rate];
-            return;
-        }
     }
     
-    // Fallback to MLHAMQueuePlayer rate control (this is also how YouSpeed's MoreSpeed mode works)
-    if (g_queuePlayer) {
-        [g_queuePlayer setRate:rate];
+    // APPROACH 3: Try the overlay controller's delegate method as a last resort
+    if (g_overlayController) {
+        @try {
+            id delegate = [g_overlayController valueForKey:@"delegate"];
+            if (delegate && [delegate respondsToSelector:@selector(varispeedSwitchController:didSelectRate:)]) {
+                [(id <YTVarispeedSwitchControllerDelegate>)delegate varispeedSwitchController:nil didSelectRate:rate];
+            }
+        } @catch (NSException *e) {
+            // Ignore
+        }
     }
 }
 
@@ -350,84 +343,77 @@ static __weak YTMainAppVideoPlayerOverlayViewController *g_overlayController = n
     _analysisTimer = nil;
     _isSpedUp = NO;
     _samplesUnderThreshold = 0;
-    [self removeAudioTap];
+    [self stopScreenRecording];
 }
 
-- (void)setupAudioTap {
-    // Setup audio tap for real audio level detection
-    if (!_currentPlayer || !_currentPlayer.currentItem) {
-        // Retry after a short delay
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            if (_isEnabled && _currentPlayer && _currentPlayer.currentItem && !_audioMix) {
-                [self setupAudioTap];
-            }
-        });
+// Screen Recording for audio capture - This will request permission
+- (void)startScreenRecording {
+    if (g_screenRecordingActive) return;
+    
+    RPScreenRecorder *recorder = [RPScreenRecorder sharedRecorder];
+    if (!recorder.isAvailable) {
+        NSLog(@"[YouSkipSilence] Screen recorder not available");
         return;
     }
     
-    AVPlayerItem *item = _currentPlayer.currentItem;
-    AVAsset *asset = item.asset;
+    // Set delegate
+    recorder.delegate = self;
+    g_screenRecorder = recorder;
     
-    // Load tracks asynchronously since HLS streams don't have tracks available immediately
-    [asset loadValuesAsynchronouslyForKeys:@[@"tracks"] completionHandler:^{
-        dispatch_async(dispatch_get_main_queue(), ^{
-            NSError *error = nil;
-            AVKeyValueStatus status = [asset statusOfValueForKey:@"tracks" error:&error];
-            
-            if (status != AVKeyValueStatusLoaded) {
-                // Tracks not loaded yet, retry
+    // Start capture with microphone disabled - we only want app audio
+    if (@available(iOS 11.0, *)) {
+        [recorder startCaptureWithHandler:^(CMSampleBufferRef sampleBuffer, RPSampleBufferType bufferType, NSError *error) {
+            if (error) {
+                NSLog(@"[YouSkipSilence] Capture error: %@", error);
                 return;
             }
             
-            NSArray *audioTracks = [asset tracksWithMediaType:AVMediaTypeAudio];
-            if (audioTracks.count == 0) {
-                // No audio tracks found, use fallback audio detection
-                return;
+            // We only care about app audio
+            if (bufferType == RPSampleBufferTypeAudioApp) {
+                float level = calculateRMSFromAudioBuffer(sampleBuffer);
+                g_currentAudioLevel = level;
+                
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    updateAudioLevel(level);
+                });
             }
-            
-            // Create audio mix for metering
-            AVMutableAudioMix *audioMix = [AVMutableAudioMix audioMix];
-            NSMutableArray *inputParameters = [NSMutableArray array];
-            
-            for (AVAssetTrack *track in audioTracks) {
-                AVMutableAudioMixInputParameters *params = [AVMutableAudioMixInputParameters audioMixInputParametersWithTrack:track];
-                
-                // Setup MTAudioProcessingTap for audio level metering
-                MTAudioProcessingTapCallbacks callbacks;
-                callbacks.version = kMTAudioProcessingTapCallbacksVersion_0;
-                callbacks.clientInfo = (__bridge void *)self;
-                callbacks.init = tapInit;
-                callbacks.finalize = tapFinalize;
-                callbacks.prepare = tapPrepare;
-                callbacks.unprepare = tapUnprepare;
-                callbacks.process = tapProcess;
-                
-                MTAudioProcessingTapRef tap;
-                OSStatus tapStatus = MTAudioProcessingTapCreate(kCFAllocatorDefault, &callbacks, kMTAudioProcessingTapCreationFlag_PreEffects, &tap);
-                
-                if (tapStatus == noErr && tap) {
-                    params.audioTapProcessor = tap;
-                    self->_audioTap = tap;
-                    CFRelease(tap);
-                    g_audioTapSetupDone = YES;
-                }
-                
-                [inputParameters addObject:params];
+        } completionHandler:^(NSError *error) {
+            if (error) {
+                NSLog(@"[YouSkipSilence] Failed to start capture: %@", error);
+                g_screenRecordingActive = NO;
+            } else {
+                NSLog(@"[YouSkipSilence] Screen recording started for audio capture");
+                g_screenRecordingActive = YES;
             }
-            
-            audioMix.inputParameters = inputParameters;
-            item.audioMix = audioMix;
-            self->_audioMix = audioMix;
-        });
-    }];
+        }];
+    }
 }
 
-- (void)removeAudioTap {
-    if (_currentPlayer.currentItem) {
-        _currentPlayer.currentItem.audioMix = nil;
+- (void)stopScreenRecording {
+    if (!g_screenRecordingActive) return;
+    
+    RPScreenRecorder *recorder = [RPScreenRecorder sharedRecorder];
+    if (@available(iOS 11.0, *)) {
+        [recorder stopCaptureWithHandler:^(NSError *error) {
+            if (error) {
+                NSLog(@"[YouSkipSilence] Error stopping capture: %@", error);
+            }
+            g_screenRecordingActive = NO;
+            g_screenRecorder = nil;
+        }];
     }
-    _audioMix = nil;
-    _audioTap = NULL;
+}
+
+// RPScreenRecorderDelegate methods
+- (void)screenRecorderDidChangeAvailability:(RPScreenRecorder *)screenRecorder {
+    NSLog(@"[YouSkipSilence] Screen recorder availability changed: %d", screenRecorder.isAvailable);
+}
+
+- (void)screenRecorder:(RPScreenRecorder *)screenRecorder didStopRecordingWithPreviewViewController:(nullable RPPreviewViewController *)previewViewController error:(nullable NSError *)error {
+    if (error) {
+        NSLog(@"[YouSkipSilence] Recording stopped with error: %@", error);
+    }
+    g_screenRecordingActive = NO;
 }
 
 - (void)startAnalysis {
@@ -435,8 +421,8 @@ static __weak YTMainAppVideoPlayerOverlayViewController *g_overlayController = n
         [_analysisTimer invalidate];
     }
     
-    // Setup audio tap on the current player item for audio level detection
-    [self setupAudioTap];
+    // Start screen recording for audio capture
+    [self startScreenRecording];
     
     // Start periodic analysis using a timer
     // This is a simplified approach that analyzes playback periodically
@@ -452,7 +438,7 @@ static __weak YTMainAppVideoPlayerOverlayViewController *g_overlayController = n
         return;
     }
     
-    // Get the current volume from the audio meter
+    // Get the current volume from the screen recording audio meter
     float volume = getAudioLevel();
     _currentVolume = volume;
     
@@ -480,7 +466,7 @@ static __weak YTMainAppVideoPlayerOverlayViewController *g_overlayController = n
 }
 
 - (float)calculateCurrentVolume {
-    // Return the current volume level set by the audio processing tap
+    // Return the current volume level set by the screen recording
     // This is updated in real-time by the tapProcess callback
     return _currentVolume;
 }
