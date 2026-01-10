@@ -54,6 +54,7 @@
 @interface YTPlayerViewController (YouSkipSilence)
 @property (nonatomic, assign) CGFloat currentVideoMediaTime;
 @property (nonatomic, assign) NSString *currentVideoID;
+- (id)activeVideoPlayerOverlay;
 - (void)didPressYouSkipSilence;
 - (void)didLongPressYouSkipSilence;
 @end
@@ -249,10 +250,13 @@ static void addLongPressGestureToButton(YTQTMButton *button, id target, SEL sele
     if (_currentVideoController) {
         // Use YouTube's native speed control
         @try {
-            id varispeedController = [_currentPlayerViewController valueForKey:@"_varispeedController"];
-            if (varispeedController) {
-                [(id <YTVarispeedSwitchControllerDelegate>)_currentPlayerViewController.delegate 
-                    varispeedSwitchController:varispeedController didSelectRate:rate];
+            id activeOverlay = [_currentPlayerViewController activeVideoPlayerOverlay];
+            if (activeOverlay && [activeOverlay isKindOfClass:NSClassFromString(@"YTMainAppVideoPlayerOverlayViewController")]) {
+                id delegate = [activeOverlay valueForKey:@"_delegate"];
+                if (delegate) {
+                    [(id <YTVarispeedSwitchControllerDelegate>)delegate 
+                        varispeedSwitchController:nil didSelectRate:rate];
+                }
             }
         } @catch (NSException *e) {
             NSLog(@"[YouSkipSilence] Error setting playback rate: %@", e);
