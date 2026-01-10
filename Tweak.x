@@ -1211,26 +1211,18 @@ static NSArray *addTimeSavedItemsToSettings(NSArray *items, YTSettingsViewContro
 }
 
 // Hook setRate to support custom speeds for silence skipping
-// This follows the same pattern as YouSpeed
+// This follows the exact same pattern as YouSpeed
 - (void)setRate:(float)newRate {
     float currentRate = [[self valueForKey:@"_rate"] floatValue];
     if (currentRate == newRate) return;
     
     // Check if varispeed is allowed for this video
     MLHAMPlayerItemSegment *segment = [self valueForKey:@"_currentSegment"];
-    if (segment) {
-        MLHAMPlayerItem *playerItem = [segment playerItem];
-        if (playerItem) {
-            MLInnerTubePlayerConfig *config = playerItem.config;
-            if (config && ![config varispeedAllowed]) {
-                // Varispeed not allowed for this video
-                %orig;
-                return;
-            }
-        }
-    }
+    MLInnerTubePlayerConfig *config = [segment playerItem].config;
+    if (![config varispeedAllowed]) return;
     
     // Set the rate directly (bypassing YouTube's speed restrictions)
+    // This is the exact pattern YouSpeed uses
     [self setValue:@(newRate) forKey:@"_rate"];
     [self internalSetRate];
 }
