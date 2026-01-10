@@ -26,6 +26,10 @@
 #import <YTVideoOverlay/Header.h>
 #import <YTVideoOverlay/Init.x>
 
+// Forward declaration for YTPlayerOverlayManager
+@interface YTPlayerOverlayManager : NSObject <YTVarispeedSwitchControllerDelegate>
+@end
+
 #define TweakKey @"YouSkipSilence"
 #define DynamicThresholdKey @"YouSkipSilence-DynamicThreshold"
 #define PlaybackSpeedKey @"YouSkipSilence-PlaybackSpeed"
@@ -271,15 +275,10 @@ static __weak YTMainAppVideoPlayerOverlayViewController *g_overlayController = n
 }
 
 - (void)setRate:(float)rate {
-    // Method 1: Use YTMainAppVideoPlayerOverlayViewController's setPlaybackRate: method
-    // This is a direct YouTube API for setting playback rate
-    if (g_overlayController && [g_overlayController respondsToSelector:@selector(setPlaybackRate:)]) {
-        [g_overlayController setPlaybackRate:rate];
-        return;
-    }
-    
-    // Method 2: Use the varispeed delegate pattern (how YouSpeed does it in slider mode)
-    // The delegate of YTMainAppVideoPlayerOverlayViewController implements YTVarispeedSwitchControllerDelegate
+    // Use the varispeed delegate pattern - this is EXACTLY how YouSpeed does it
+    // in the didChangePlaybackSpeed: method. The delegate of 
+    // YTMainAppVideoPlayerOverlayViewController implements YTVarispeedSwitchControllerDelegate
+    // and properly updates YouTube's internal state including the UI.
     if (g_overlayController) {
         id delegate = g_overlayController.delegate;
         if (delegate && [delegate respondsToSelector:@selector(varispeedSwitchController:didSelectRate:)]) {
@@ -288,12 +287,9 @@ static __weak YTMainAppVideoPlayerOverlayViewController *g_overlayController = n
         }
     }
     
-    // Method 3: Fallback to MLHAMQueuePlayer rate control
+    // Fallback to MLHAMQueuePlayer rate control (this is also how YouSpeed's MoreSpeed mode works)
     if (g_queuePlayer) {
         [g_queuePlayer setRate:rate];
-    } else if (_currentPlayer) {
-        // Last resort fallback to AVPlayer
-        _currentPlayer.rate = rate;
     }
 }
 
@@ -982,7 +978,34 @@ static void showSettingsPopup(UIViewController *presenter) {
 
 %end
 
+// Track speed changes from YouTube's native speed controls
+// This follows the same pattern as YouSpeed to keep track of current rate
+%hook YTPlayerOverlayManager
+
+- (void)varispeedSwitchController:(id)arg1 didSelectRate:(float)rate {
+    // Track the rate change
+    YouSkipSilenceManager *manager = [YouSkipSilenceManager sharedManager];
+    if (!manager.isSpedUp) {
+        // Only update playback speed if we're not currently skipping silence
+        manager.playbackSpeed = rate;
+    }
+    %orig;
+}
+
+%end
+
 %hook YTPlayerViewController
+
+// Also track speed changes at this level (some code paths use this)
+- (void)varispeedSwitchController:(id)arg1 didSelectRate:(float)rate {
+    // Track the rate change
+    YouSkipSilenceManager *manager = [YouSkipSilenceManager sharedManager];
+    if (!manager.isSpedUp) {
+        // Only update playback speed if we're not currently skipping silence
+        manager.playbackSpeed = rate;
+    }
+    %orig;
+}
 
 %new
 - (void)didPressYouSkipSilence {
