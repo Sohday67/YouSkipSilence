@@ -893,6 +893,7 @@ static YouSkipSilencePopupView *skipSilencePopup = nil;
         ExtraBooleanKeys: @[EnabledKey, DynamicThresholdKey],
     });
     
+    %init; // Initialize ungrouped hooks (including YouSkipSilencePopupView subclass)
     %init(Main);
     %init(Top);
     %init(Bottom);
