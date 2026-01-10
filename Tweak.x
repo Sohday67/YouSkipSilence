@@ -161,6 +161,8 @@ static float getAudioLevel(void) {
 
 // Global reference to the YouTube queue player for speed control
 static MLHAMQueuePlayer *g_queuePlayer = nil;
+// Global reference to the overlay view controller for speed delegate calls
+static __weak YTMainAppVideoPlayerOverlayViewController *g_overlayController = nil;
 
 @interface YouSkipSilenceManager : NSObject
 
@@ -267,11 +269,22 @@ static MLHAMQueuePlayer *g_queuePlayer = nil;
 }
 
 - (void)setRate:(float)rate {
-    // Use YouTube's MLHAMQueuePlayer for rate control
+    // Use YouTube's native speed control mechanism via the delegate pattern
+    // This ensures YouTube's UI and internal state stay in sync
+    if (g_overlayController) {
+        // Call the varispeed delegate method - this is how YouSpeed properly changes speed
+        id delegate = g_overlayController.delegate;
+        if ([delegate conformsToProtocol:@protocol(YTVarispeedSwitchControllerDelegate)]) {
+            [(id <YTVarispeedSwitchControllerDelegate>)delegate varispeedSwitchController:nil didSelectRate:rate];
+            return;
+        }
+    }
+    
+    // Fallback: Use YouTube's MLHAMQueuePlayer for rate control
     if (g_queuePlayer) {
         [g_queuePlayer setRate:rate];
     } else if (_currentPlayer) {
-        // Fallback to AVPlayer if queue player not available
+        // Last resort fallback to AVPlayer
         _currentPlayer.rate = rate;
     }
 }
@@ -943,6 +956,24 @@ static void showSettingsPopup(UIViewController *presenter) {
 #pragma mark - Main Hooks
 
 %group Main
+
+%hook YTMainAppVideoPlayerOverlayViewController
+
+- (void)viewDidAppear:(BOOL)animated {
+    %orig;
+    // Capture reference to use for speed control delegate calls
+    g_overlayController = self;
+}
+
+- (void)viewDidDisappear:(BOOL)animated {
+    %orig;
+    if (g_overlayController == self) {
+        g_overlayController = nil;
+    }
+}
+
+%end
+
 %hook YTPlayerViewController
 
 %new
