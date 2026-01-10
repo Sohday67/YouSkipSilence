@@ -479,14 +479,6 @@ static UIImage *skipSilenceImage(NSString *qualityLabel, BOOL enabled) {
     return [%c(QTMIcon) tintImage:image color:[%c(YTColor) white1]];
 }
 
-static void addLongPressGestureToButton(YTQTMButton *button, id target, SEL selector) {
-    if (button) {
-        UILongPressGestureRecognizer *longPress = [[UILongPressGestureRecognizer alloc] initWithTarget:target action:selector];
-        longPress.minimumPressDuration = 0.5;
-        [button addGestureRecognizer:longPress];
-    }
-}
-
 #pragma mark - Settings Popup
 
 static void showSettingsPopup(UIViewController *presenter) {
@@ -737,22 +729,6 @@ static void showSettingsPopup(UIViewController *presenter) {
 %group Top
 %hook YTMainAppControlsOverlayView
 
-- (id)initWithDelegate:(id)delegate {
-    self = %orig;
-    if (self) {
-        addLongPressGestureToButton(self.overlayButtons[TweakKey], self, @selector(didLongPressYouSkipSilence:));
-    }
-    return self;
-}
-
-- (id)initWithDelegate:(id)delegate autoplaySwitchEnabled:(BOOL)autoplaySwitchEnabled {
-    self = %orig;
-    if (self) {
-        addLongPressGestureToButton(self.overlayButtons[TweakKey], self, @selector(didLongPressYouSkipSilence:));
-    }
-    return self;
-}
-
 - (UIImage *)buttonImage:(NSString *)tweakId {
     if ([tweakId isEqualToString:TweakKey]) {
         YouSkipSilenceManager *manager = [YouSkipSilenceManager sharedManager];
@@ -775,18 +751,6 @@ static void showSettingsPopup(UIViewController *presenter) {
     }
 }
 
-%new(v@:@)
-- (void)didLongPressYouSkipSilence:(UILongPressGestureRecognizer *)gesture {
-    if (gesture.state == UIGestureRecognizerStateBegan) {
-        YTMainAppVideoPlayerOverlayView *mainOverlayView = (YTMainAppVideoPlayerOverlayView *)self.superview;
-        YTMainAppVideoPlayerOverlayViewController *mainOverlayController = (YTMainAppVideoPlayerOverlayViewController *)mainOverlayView.delegate;
-        YTPlayerViewController *playerViewController = mainOverlayController.parentViewController;
-        if (playerViewController) {
-            [playerViewController didLongPressYouSkipSilence];
-        }
-    }
-}
-
 %end
 %end
 
@@ -794,14 +758,6 @@ static void showSettingsPopup(UIViewController *presenter) {
 
 %group Bottom
 %hook YTInlinePlayerBarContainerView
-
-- (id)init {
-    self = %orig;
-    if (self) {
-        addLongPressGestureToButton(self.overlayButtons[TweakKey], self, @selector(didLongPressYouSkipSilence:));
-    }
-    return self;
-}
 
 - (UIImage *)buttonImage:(NSString *)tweakId {
     if ([tweakId isEqualToString:TweakKey]) {
@@ -822,18 +778,6 @@ static void showSettingsPopup(UIViewController *presenter) {
         // Update button image
         YouSkipSilenceManager *manager = [YouSkipSilenceManager sharedManager];
         [self.overlayButtons[TweakKey] setImage:skipSilenceImage(@"3", manager.isEnabled) forState:UIControlStateNormal];
-    }
-}
-
-%new(v@:@)
-- (void)didLongPressYouSkipSilence:(UILongPressGestureRecognizer *)gesture {
-    if (gesture.state == UIGestureRecognizerStateBegan) {
-        YTInlinePlayerBarController *delegate = self.delegate;
-        YTMainAppVideoPlayerOverlayViewController *_delegate = [delegate valueForKey:@"_delegate"];
-        YTPlayerViewController *parentViewController = _delegate.parentViewController;
-        if (parentViewController) {
-            [parentViewController didLongPressYouSkipSilence];
-        }
     }
 }
 
@@ -954,7 +898,6 @@ static NSArray *addTimeSavedItemsToSettings(NSArray *items, YTSettingsViewContro
         AccessibilityLabelKey: @"Skip Silence",
         SelectorKey: @"didPressYouSkipSilence:",
         UpdateImageOnVisibleKey: @YES, // Update image when button becomes visible
-        ToggleKey: EnabledKey, // Use our own enabled key so toggle state syncs with YTVideoOverlay
         ExtraBooleanKeys: @[DynamicThresholdKey],
     });
     %init(Main);
