@@ -954,6 +954,7 @@ static NSArray *addTimeSavedItemsToSettings(NSArray *items, YTSettingsViewContro
         AccessibilityLabelKey: @"Skip Silence",
         SelectorKey: @"didPressYouSkipSilence:",
         UpdateImageOnVisibleKey: @YES, // Update image when button becomes visible
+        ToggleKey: EnabledKey, // Use our own enabled key so toggle state syncs with YTVideoOverlay
         ExtraBooleanKeys: @[DynamicThresholdKey],
     });
     %init(Main);

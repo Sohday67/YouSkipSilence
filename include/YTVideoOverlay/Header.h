@@ -5,8 +5,11 @@
 #if __has_include_next(<YTVideoOverlay/Header.h>)
 #import_next <YTVideoOverlay/Header.h>
 #else
-static NSString *const AccessibilityLabelKey = @"AccessibilityLabelKey";
-static NSString *const SelectorKey = @"SelectorKey";
-static NSString *const UpdateImageOnVisibleKey = @"UpdateImageOnVisibleKey";
-static NSString *const ExtraBooleanKeys = @"ExtraBooleanKeys";
+// Keys used by YTVideoOverlay for tweak registration
+static NSString *const AccessibilityLabelKey = @"accessibilityLabel";
+static NSString *const ToggleKey = @"toggle";
+static NSString *const AsTextKey = @"asText";
+static NSString *const SelectorKey = @"selector";
+static NSString *const UpdateImageOnVisibleKey = @"updateImageOnVisible";
+static NSString *const ExtraBooleanKeys = @"extraBooleanKeys";
 #endif
