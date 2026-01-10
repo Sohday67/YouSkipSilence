@@ -4,10 +4,6 @@
 #import <dlfcn.h>
 #import <rootless.h>
 
-@interface YTSettingsSectionItemManager : NSObject
-+ (void)registerTweak:(NSString *)tweakId metadata:(NSDictionary *)metadata;
-@end
-
 static inline void initYTVideoOverlay(NSString *tweakKey, NSDictionary *metadata) {
     // Try to load YTVideoOverlay from the app bundle
     NSString *bundlePath = [[NSBundle mainBundle] bundlePath];
@@ -17,10 +13,22 @@ static inline void initYTVideoOverlay(NSString *tweakKey, NSDictionary *metadata
     // Try to load from substrate
     dlopen(ROOT_PATH_NS(@"/Library/MobileSubstrate/DynamicLibraries/YTVideoOverlay.dylib").UTF8String, RTLD_LAZY);
     
-    // Register the tweak with YTVideoOverlay
+    // Register the tweak with YTVideoOverlay using performSelector
+    // The registerTweak:metadata: method is added by YTVideoOverlay at runtime
     Class managerClass = NSClassFromString(@"YTSettingsSectionItemManager");
-    if (managerClass && [managerClass respondsToSelector:@selector(registerTweak:metadata:)]) {
-        [managerClass registerTweak:tweakKey metadata:metadata];
+    if (managerClass) {
+        SEL registerSelector = NSSelectorFromString(@"registerTweak:metadata:");
+        if ([managerClass respondsToSelector:registerSelector]) {
+            NSMethodSignature *sig = [managerClass methodSignatureForSelector:registerSelector];
+            if (sig) {
+                NSInvocation *invocation = [NSInvocation invocationWithMethodSignature:sig];
+                [invocation setTarget:managerClass];
+                [invocation setSelector:registerSelector];
+                [invocation setArgument:&tweakKey atIndex:2];
+                [invocation setArgument:&metadata atIndex:3];
+                [invocation invoke];
+            }
+        }
     }
 }
 #endif
