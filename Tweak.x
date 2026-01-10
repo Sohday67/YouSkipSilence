@@ -57,6 +57,8 @@ static const int kSamplesThreshold = 10;
 @interface YTMainAppVideoPlayerOverlayViewController (YouSkipSilence)
 @property (nonatomic, assign) YTPlayerViewController *parentViewController;
 @property (nonatomic, weak) id delegate;
+- (void)setPlaybackRate:(CGFloat)rate;
+- (CGFloat)currentPlaybackRate;
 @end
 
 @interface YTMainAppVideoPlayerOverlayView (YouSkipSilence)
@@ -269,18 +271,24 @@ static __weak YTMainAppVideoPlayerOverlayViewController *g_overlayController = n
 }
 
 - (void)setRate:(float)rate {
-    // Use YouTube's native speed control mechanism via the delegate pattern
-    // This ensures YouTube's UI and internal state stay in sync
+    // Method 1: Use YTMainAppVideoPlayerOverlayViewController's setPlaybackRate: method
+    // This is a direct YouTube API for setting playback rate
+    if (g_overlayController && [g_overlayController respondsToSelector:@selector(setPlaybackRate:)]) {
+        [g_overlayController setPlaybackRate:rate];
+        return;
+    }
+    
+    // Method 2: Use the varispeed delegate pattern (how YouSpeed does it in slider mode)
+    // The delegate of YTMainAppVideoPlayerOverlayViewController implements YTVarispeedSwitchControllerDelegate
     if (g_overlayController) {
-        // Call the varispeed delegate method - this is how YouSpeed properly changes speed
         id delegate = g_overlayController.delegate;
-        if ([delegate conformsToProtocol:@protocol(YTVarispeedSwitchControllerDelegate)]) {
+        if (delegate && [delegate respondsToSelector:@selector(varispeedSwitchController:didSelectRate:)]) {
             [(id <YTVarispeedSwitchControllerDelegate>)delegate varispeedSwitchController:nil didSelectRate:rate];
             return;
         }
     }
     
-    // Fallback: Use YouTube's MLHAMQueuePlayer for rate control
+    // Method 3: Fallback to MLHAMQueuePlayer rate control
     if (g_queuePlayer) {
         [g_queuePlayer setRate:rate];
     } else if (_currentPlayer) {
