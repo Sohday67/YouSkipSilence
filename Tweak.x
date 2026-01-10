@@ -62,6 +62,7 @@ static const int kSamplesThreshold = 10;
 @property (nonatomic, weak) id delegate;
 - (void)setPlaybackRate:(CGFloat)rate;
 - (CGFloat)currentPlaybackRate;
+- (void)youSkipSilenceSetRate:(float)rate;
 @end
 
 @interface YTMainAppVideoPlayerOverlayView (YouSkipSilence)
@@ -274,14 +275,40 @@ static __weak YTMainAppVideoPlayerOverlayViewController *g_overlayController = n
 }
 
 - (void)setRate:(float)rate {
-    // Use the varispeed delegate pattern - this is EXACTLY how YouSpeed does it
-    // in the didChangePlaybackSpeed: method. The delegate of 
-    // YTMainAppVideoPlayerOverlayViewController implements YTVarispeedSwitchControllerDelegate
-    // and properly updates YouTube's internal state including the UI.
+    // Primary approach: Use our new method on YTMainAppVideoPlayerOverlayViewController
+    // This mirrors YouSpeed's didChangePlaybackSpeed: which works because `self.delegate`
+    // properly resolves within the controller's context
+    if (g_overlayController && [g_overlayController respondsToSelector:@selector(youSkipSilenceSetRate:)]) {
+        [g_overlayController youSkipSilenceSetRate:rate];
+        return;
+    }
+    
+    // Secondary approach: Try to get the delegate and call directly
     if (g_overlayController) {
-        id delegate = g_overlayController.delegate;
+        // Try property accessor first, then KVC - some YT versions use different patterns
+        id delegate = nil;
+        @try {
+            delegate = [g_overlayController valueForKey:@"delegate"];
+        } @catch (NSException *e) {
+            delegate = nil;
+        }
+        
+        if (!delegate) {
+            @try {
+                delegate = [g_overlayController valueForKey:@"_delegate"];
+            } @catch (NSException *e) {
+                delegate = nil;
+            }
+        }
+        
         if (delegate && [delegate respondsToSelector:@selector(varispeedSwitchController:didSelectRate:)]) {
             [(id <YTVarispeedSwitchControllerDelegate>)delegate varispeedSwitchController:nil didSelectRate:rate];
+            return;
+        }
+        
+        // Also try calling directly on the overlay controller (it may implement the protocol itself)
+        if ([g_overlayController respondsToSelector:@selector(varispeedSwitchController:didSelectRate:)]) {
+            [(id <YTVarispeedSwitchControllerDelegate>)g_overlayController varispeedSwitchController:nil didSelectRate:rate];
             return;
         }
     }
@@ -972,6 +999,18 @@ static void showSettingsPopup(UIViewController *presenter) {
     %orig;
     if (g_overlayController == self) {
         g_overlayController = nil;
+    }
+}
+
+// New method to change playback speed - this mirrors YouSpeed's didChangePlaybackSpeed:
+// By adding this method to the controller, we can call it from outside and 
+// have `self.delegate` properly resolve to the YTVarispeedSwitchControllerDelegate
+%new(v@:f)
+- (void)youSkipSilenceSetRate:(float)rate {
+    // This is exactly how YouSpeed's didChangePlaybackSpeed: works
+    id delegate = self.delegate;
+    if (delegate && [delegate respondsToSelector:@selector(varispeedSwitchController:didSelectRate:)]) {
+        [(id <YTVarispeedSwitchControllerDelegate>)delegate varispeedSwitchController:nil didSelectRate:rate];
     }
 }
 
