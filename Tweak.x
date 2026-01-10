@@ -18,6 +18,8 @@
 #import <YouTubeHeader/YTSettingsViewController.h>
 #import <YouTubeHeader/MLHAMQueuePlayer.h>
 #import <YouTubeHeader/MLHAMPlayerItemSegment.h>
+#import <YouTubeHeader/YTVarispeedSwitchController.h>
+#import <YouTubeHeader/YTVarispeedSwitchControllerOption.h>
 
 #import <YTVideoOverlay/Header.h>
 #import <YTVideoOverlay/Init.x>
@@ -39,14 +41,36 @@ static const int kSamplesThreshold = 10;
 // Forward declarations
 @class YouSkipSilenceManager;
 
+// Protocol for varispeed delegate
+@protocol YTVarispeedSwitchControllerDelegate <NSObject>
+@optional
+- (void)varispeedSwitchController:(id)controller didSelectRate:(float)rate;
+@end
+
 // MLHAMQueuePlayer method declarations for rate control
 @interface MLHAMQueuePlayer (YouSkipSilence)
 - (void)setRate:(float)rate;
 - (void)internalSetRate;
 @end
 
-@interface YTMainAppVideoPlayerOverlayViewController (YouSkipSilence)
+// MLInnerTubePlayerConfig for checking varispeed
+@interface MLInnerTubePlayerConfig : NSObject
+- (BOOL)varispeedAllowed;
+@end
+
+// MLPlayerItem for getting config
+@interface MLPlayerItem : NSObject
+@property (nonatomic, readonly) MLInnerTubePlayerConfig *config;
+@end
+
+// MLHAMPlayerItemSegment for getting player item
+@interface MLHAMPlayerItemSegment (YouSkipSilence)
+- (MLPlayerItem *)playerItem;
+@end
+
+@interface YTMainAppVideoPlayerOverlayViewController (YouSkipSilence) <YTVarispeedSwitchControllerDelegate>
 @property (nonatomic, assign) YTPlayerViewController *parentViewController;
+@property (nonatomic, weak) id delegate;
 @end
 
 @interface YTMainAppVideoPlayerOverlayView (YouSkipSilence)
@@ -85,65 +109,12 @@ static const int kSamplesThreshold = 10;
 @class YouSkipSilenceManager;
 static void updateAudioLevel(float level);
 
-// Audio metering using AVAudioRecorder for system-level audio detection
-static AVAudioRecorder *g_audioRecorder = nil;
+// Audio level tracking using KVO on the player's volume output
+// We'll use a simpler approach - track audio from the video element via the player
+static float g_currentAudioLevel = 50.0f;
+static BOOL g_audioTapSetupDone = NO;
 
-static void setupAudioMeter(void) {
-    if (g_audioRecorder) return;
-    
-    // Configure audio session for metering
-    AVAudioSession *session = [AVAudioSession sharedInstance];
-    NSError *error = nil;
-    [session setCategory:AVAudioSessionCategoryPlayAndRecord 
-             withOptions:AVAudioSessionCategoryOptionDefaultToSpeaker | AVAudioSessionCategoryOptionMixWithOthers
-                   error:&error];
-    [session setActive:YES error:&error];
-    
-    // Create a temporary file for the recorder (it won't actually record)
-    NSString *tempPath = [NSTemporaryDirectory() stringByAppendingPathComponent:@"youskipsilence_meter.caf"];
-    NSURL *tempURL = [NSURL fileURLWithPath:tempPath];
-    
-    // Audio settings for metering
-    NSDictionary *settings = @{
-        AVFormatIDKey: @(kAudioFormatAppleLossless),
-        AVSampleRateKey: @44100.0,
-        AVNumberOfChannelsKey: @1,
-        AVEncoderAudioQualityKey: @(AVAudioQualityMin)
-    };
-    
-    g_audioRecorder = [[AVAudioRecorder alloc] initWithURL:tempURL settings:settings error:&error];
-    if (g_audioRecorder) {
-        g_audioRecorder.meteringEnabled = YES;
-        [g_audioRecorder prepareToRecord];
-        [g_audioRecorder record];
-    }
-}
-
-static void stopAudioMeter(void) {
-    if (g_audioRecorder) {
-        [g_audioRecorder stop];
-        g_audioRecorder = nil;
-    }
-}
-
-static float getAudioLevel(void) {
-    if (!g_audioRecorder) return 50.0f;
-    
-    [g_audioRecorder updateMeters];
-    
-    // Get average power (in dB, typically -160 to 0)
-    float averagePower = [g_audioRecorder averagePowerForChannel:0];
-    
-    // Convert dB to linear scale (0-100)
-    // -160 dB is silence, 0 dB is maximum
-    // Typical speech is around -20 to -10 dB
-    float level = (averagePower + 80) * 1.25; // Map -80dB to 0, 0dB to 100
-    level = fmaxf(0, fminf(100, level));
-    
-    return level;
-}
-
-// MTAudioProcessingTap callbacks (fallback for non-DRM content)
+// MTAudioProcessingTap callbacks for getting real audio levels
 static void tapInit(MTAudioProcessingTapRef tap, void *clientInfo, void **tapStorageOut) {
     *tapStorageOut = clientInfo;
 }
@@ -187,11 +158,17 @@ static void tapProcess(MTAudioProcessingTapRef tap, CMItemCount numberFrames, MT
         float level = rms * 500; // Scale up for visibility
         level = fminf(100, fmaxf(0, level));
         
+        g_currentAudioLevel = level;
+        
         // Update manager on main thread
         dispatch_async(dispatch_get_main_queue(), ^{
             updateAudioLevel(level);
         });
     }
+}
+
+static float getAudioLevel(void) {
+    return g_currentAudioLevel;
 }
 
 #pragma mark - YouSkipSilenceManager
@@ -344,50 +321,76 @@ static MLHAMQueuePlayer *g_queuePlayer = nil;
     _analysisTimer = nil;
     _isSpedUp = NO;
     _samplesUnderThreshold = 0;
-    stopAudioMeter();
     [self removeAudioTap];
 }
 
 - (void)setupAudioTap {
     // Setup audio tap for real audio level detection
-    if (!_currentPlayer || !_currentPlayer.currentItem) return;
-    
-    AVPlayerItem *item = _currentPlayer.currentItem;
-    NSArray *audioTracks = [item.asset tracksWithMediaType:AVMediaTypeAudio];
-    if (audioTracks.count == 0) return;
-    
-    // Create audio mix for metering
-    AVMutableAudioMix *audioMix = [AVMutableAudioMix audioMix];
-    NSMutableArray *inputParameters = [NSMutableArray array];
-    
-    for (AVAssetTrack *track in audioTracks) {
-        AVMutableAudioMixInputParameters *params = [AVMutableAudioMixInputParameters audioMixInputParametersWithTrack:track];
-        
-        // Setup MTAudioProcessingTap for audio level metering
-        MTAudioProcessingTapCallbacks callbacks;
-        callbacks.version = kMTAudioProcessingTapCallbacksVersion_0;
-        callbacks.clientInfo = (__bridge void *)self;
-        callbacks.init = tapInit;
-        callbacks.finalize = tapFinalize;
-        callbacks.prepare = tapPrepare;
-        callbacks.unprepare = tapUnprepare;
-        callbacks.process = tapProcess;
-        
-        MTAudioProcessingTapRef tap;
-        OSStatus status = MTAudioProcessingTapCreate(kCFAllocatorDefault, &callbacks, kMTAudioProcessingTapCreationFlag_PreEffects, &tap);
-        
-        if (status == noErr && tap) {
-            params.audioTapProcessor = tap;
-            _audioTap = tap;
-            CFRelease(tap);
-        }
-        
-        [inputParameters addObject:params];
+    if (!_currentPlayer || !_currentPlayer.currentItem) {
+        // Retry after a short delay
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            if (_isEnabled && _currentPlayer && _currentPlayer.currentItem && !_audioMix) {
+                [self setupAudioTap];
+            }
+        });
+        return;
     }
     
-    audioMix.inputParameters = inputParameters;
-    item.audioMix = audioMix;
-    _audioMix = audioMix;
+    AVPlayerItem *item = _currentPlayer.currentItem;
+    AVAsset *asset = item.asset;
+    
+    // Load tracks asynchronously since HLS streams don't have tracks available immediately
+    [asset loadValuesAsynchronouslyForKeys:@[@"tracks"] completionHandler:^{
+        dispatch_async(dispatch_get_main_queue(), ^{
+            NSError *error = nil;
+            AVKeyValueStatus status = [asset statusOfValueForKey:@"tracks" error:&error];
+            
+            if (status != AVKeyValueStatusLoaded) {
+                // Tracks not loaded yet, retry
+                return;
+            }
+            
+            NSArray *audioTracks = [asset tracksWithMediaType:AVMediaTypeAudio];
+            if (audioTracks.count == 0) {
+                // No audio tracks found, use fallback audio detection
+                return;
+            }
+            
+            // Create audio mix for metering
+            AVMutableAudioMix *audioMix = [AVMutableAudioMix audioMix];
+            NSMutableArray *inputParameters = [NSMutableArray array];
+            
+            for (AVAssetTrack *track in audioTracks) {
+                AVMutableAudioMixInputParameters *params = [AVMutableAudioMixInputParameters audioMixInputParametersWithTrack:track];
+                
+                // Setup MTAudioProcessingTap for audio level metering
+                MTAudioProcessingTapCallbacks callbacks;
+                callbacks.version = kMTAudioProcessingTapCallbacksVersion_0;
+                callbacks.clientInfo = (__bridge void *)self;
+                callbacks.init = tapInit;
+                callbacks.finalize = tapFinalize;
+                callbacks.prepare = tapPrepare;
+                callbacks.unprepare = tapUnprepare;
+                callbacks.process = tapProcess;
+                
+                MTAudioProcessingTapRef tap;
+                OSStatus tapStatus = MTAudioProcessingTapCreate(kCFAllocatorDefault, &callbacks, kMTAudioProcessingTapCreationFlag_PreEffects, &tap);
+                
+                if (tapStatus == noErr && tap) {
+                    params.audioTapProcessor = tap;
+                    self->_audioTap = tap;
+                    CFRelease(tap);
+                    g_audioTapSetupDone = YES;
+                }
+                
+                [inputParameters addObject:params];
+            }
+            
+            audioMix.inputParameters = inputParameters;
+            item.audioMix = audioMix;
+            self->_audioMix = audioMix;
+        });
+    }];
 }
 
 - (void)removeAudioTap {
@@ -403,8 +406,8 @@ static MLHAMQueuePlayer *g_queuePlayer = nil;
         [_analysisTimer invalidate];
     }
     
-    // Start audio metering for level detection
-    setupAudioMeter();
+    // Setup audio tap on the current player item for audio level detection
+    [self setupAudioTap];
     
     // Start periodic analysis using a timer
     // This is a simplified approach that analyzes playback periodically
@@ -1221,19 +1224,29 @@ static NSArray *addTimeSavedItemsToSettings(NSArray *items, YTSettingsViewContro
     %orig;
 }
 
-// Hook setRate to support speeds beyond normal limits for silence skipping
-- (void)setRate:(float)rate {
-    YouSkipSilenceManager *manager = [YouSkipSilenceManager sharedManager];
+// Hook setRate to support custom speeds for silence skipping
+// This follows the same pattern as YouSpeed
+- (void)setRate:(float)newRate {
+    float currentRate = [[self valueForKey:@"_rate"] floatValue];
+    if (currentRate == newRate) return;
     
-    // Allow custom rates when skip silence is active
-    if (manager.isEnabled && (manager.isSpedUp || rate != 1.0f)) {
-        // Directly set the rate bypassing YouTube's restrictions
-        [self setValue:@(rate) forKey:@"_rate"];
-        [self internalSetRate];
-        return;
+    // Check if varispeed is allowed for this video
+    MLHAMPlayerItemSegment *segment = [self valueForKey:@"_currentSegment"];
+    if (segment) {
+        MLPlayerItem *playerItem = [segment playerItem];
+        if (playerItem) {
+            MLInnerTubePlayerConfig *config = playerItem.config;
+            if (config && ![config varispeedAllowed]) {
+                // Varispeed not allowed for this video
+                %orig;
+                return;
+            }
+        }
     }
     
-    %orig;
+    // Set the rate directly (bypassing YouTube's speed restrictions)
+    [self setValue:@(newRate) forKey:@"_rate"];
+    [self internalSetRate];
 }
 
 %end
