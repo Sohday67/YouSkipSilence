@@ -18,6 +18,8 @@
 #import <YouTubeHeader/YTSettingsViewController.h>
 #import <YouTubeHeader/MLHAMQueuePlayer.h>
 #import <YouTubeHeader/MLHAMPlayerItemSegment.h>
+#import <YouTubeHeader/MLInnerTubePlayerConfig.h>
+#import <YouTubeHeader/MLHAMPlayerItem.h>
 #import <YouTubeHeader/YTVarispeedSwitchController.h>
 #import <YouTubeHeader/YTVarispeedSwitchControllerOption.h>
 
@@ -47,19 +49,9 @@ static const int kSamplesThreshold = 10;
 - (void)internalSetRate;
 @end
 
-// MLInnerTubePlayerConfig for checking varispeed
-@interface MLInnerTubePlayerConfig : NSObject
-- (BOOL)varispeedAllowed;
-@end
-
-// MLPlayerItem for getting config
-@interface MLPlayerItem : NSObject
-@property (nonatomic, readonly) MLInnerTubePlayerConfig *config;
-@end
-
 // MLHAMPlayerItemSegment for getting player item
 @interface MLHAMPlayerItemSegment (YouSkipSilence)
-- (MLPlayerItem *)playerItem;
+- (MLHAMPlayerItem *)playerItem;
 @end
 
 @interface YTMainAppVideoPlayerOverlayViewController (YouSkipSilence)
@@ -1227,7 +1219,7 @@ static NSArray *addTimeSavedItemsToSettings(NSArray *items, YTSettingsViewContro
     // Check if varispeed is allowed for this video
     MLHAMPlayerItemSegment *segment = [self valueForKey:@"_currentSegment"];
     if (segment) {
-        MLPlayerItem *playerItem = [segment playerItem];
+        MLHAMPlayerItem *playerItem = [segment playerItem];
         if (playerItem) {
             MLInnerTubePlayerConfig *config = playerItem.config;
             if (config && ![config varispeedAllowed]) {
