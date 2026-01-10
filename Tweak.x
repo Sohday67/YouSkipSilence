@@ -2,6 +2,7 @@
 #import <AVFoundation/AVFoundation.h>
 #import <UIKit/UIKit.h>
 #import <ReplayKit/ReplayKit.h>
+#import <AudioToolbox/AudioToolbox.h>
 #import <rootless.h>
 
 #import <YouTubeHeader/YTColor.h>
@@ -36,6 +37,17 @@
 #define EnabledKey @"YouSkipSilence-Enabled"
 #define TotalTimeSavedKey @"YouSkipSilence-TotalTimeSaved"
 #define LastVideoTimeSavedKey @"YouSkipSilence-LastVideoTimeSaved"
+#define AudioDetectionMethodKey @"YouSkipSilence-AudioDetectionMethod"
+
+// Audio detection methods
+typedef NS_ENUM(NSInteger, AudioDetectionMethod) {
+    AudioDetectionMethodReplayKit = 0,       // ReplayKit screen recording
+    AudioDetectionMethodAudioTap = 1,        // MTAudioProcessingTap
+    AudioDetectionMethodAVAudioEngine = 2,   // AVAudioEngine
+    AudioDetectionMethodAVPlayer = 3,        // AVPlayer volume property
+    AudioDetectionMethodSimulated = 4,       // Simulated for testing
+    AudioDetectionMethodCount = 5            // Number of methods
+};
 
 // Default values
 static const float kDefaultPlaybackSpeed = 1.1f;
@@ -45,6 +57,18 @@ static const int kSamplesThreshold = 10;
 
 // Forward declarations
 @class YouSkipSilenceManager;
+
+// Get audio detection method name for display
+static NSString *getAudioMethodName(AudioDetectionMethod method) {
+    switch (method) {
+        case AudioDetectionMethodReplayKit: return @"ReplayKit (Screen Recording)";
+        case AudioDetectionMethodAudioTap: return @"MTAudioProcessingTap";
+        case AudioDetectionMethodAVAudioEngine: return @"AVAudioEngine";
+        case AudioDetectionMethodAVPlayer: return @"AVPlayer Volume";
+        case AudioDetectionMethodSimulated: return @"Simulated (Testing)";
+        default: return @"Unknown";
+    }
+}
 
 // MLHAMQueuePlayer method declarations for rate control
 @interface MLHAMQueuePlayer (YouSkipSilence)
@@ -95,18 +119,26 @@ static const int kSamplesThreshold = 10;
 - (void)didLongPressYouSkipSilence:(UILongPressGestureRecognizer *)gesture;
 @end
 
-#pragma mark - Screen Recording Audio Capture
+#pragma mark - Audio Detection Methods
 
 // Forward declaration for manager
 @class YouSkipSilenceManager;
 static void updateAudioLevel(float level);
 
-// Audio level tracking using screen recording
+// Audio level tracking
 static float g_currentAudioLevel = 50.0f;
 static BOOL g_screenRecordingActive = NO;
 static RPScreenRecorder *g_screenRecorder = nil;
 
-// Calculate RMS from audio buffer
+// MTAudioProcessingTap globals
+static MTAudioProcessingTapRef g_audioTap = NULL;
+static BOOL g_audioTapActive = NO;
+
+// AVAudioEngine globals
+static AVAudioEngine *g_audioEngine = nil;
+static BOOL g_audioEngineActive = NO;
+
+// Calculate RMS from audio buffer (for ReplayKit)
 static float calculateRMSFromAudioBuffer(CMSampleBufferRef sampleBuffer) {
     if (!sampleBuffer) return 0;
     
@@ -143,6 +175,56 @@ static float calculateRMSFromAudioBuffer(CMSampleBufferRef sampleBuffer) {
     return 0;
 }
 
+// MTAudioProcessingTap callbacks
+static void tapInitCallback(MTAudioProcessingTapRef tap, void *clientInfo, void **tapStorageOut) {
+    NSLog(@"[YouSkipSilence] Audio tap initialized");
+    *tapStorageOut = clientInfo;
+}
+
+static void tapFinalizeCallback(MTAudioProcessingTapRef tap) {
+    NSLog(@"[YouSkipSilence] Audio tap finalized");
+}
+
+static void tapPrepareCallback(MTAudioProcessingTapRef tap, CMItemCount maxFrames, const AudioStreamBasicDescription *processingFormat) {
+    NSLog(@"[YouSkipSilence] Audio tap prepared: %d channels, %f Hz", processingFormat->mChannelsPerFrame, processingFormat->mSampleRate);
+}
+
+static void tapUnprepareCallback(MTAudioProcessingTapRef tap) {
+    NSLog(@"[YouSkipSilence] Audio tap unprepared");
+}
+
+static void tapProcessCallback(MTAudioProcessingTapRef tap, CMItemCount numberFrames, MTAudioProcessingTapFlags flags, AudioBufferList *bufferListInOut, CMItemCount *numberFramesOut, MTAudioProcessingTapFlags *flagsOut) {
+    OSStatus status = MTAudioProcessingTapGetSourceAudio(tap, numberFrames, bufferListInOut, flagsOut, NULL, numberFramesOut);
+    if (status != noErr) return;
+    
+    // Calculate RMS of the audio
+    float totalSquared = 0;
+    UInt32 totalSamples = 0;
+    
+    for (UInt32 i = 0; i < bufferListInOut->mNumberBuffers; i++) {
+        AudioBuffer buffer = bufferListInOut->mBuffers[i];
+        float *samples = (float *)buffer.mData;
+        UInt32 sampleCount = buffer.mDataByteSize / sizeof(float);
+        
+        for (UInt32 j = 0; j < sampleCount; j++) {
+            totalSquared += samples[j] * samples[j];
+        }
+        totalSamples += sampleCount;
+    }
+    
+    if (totalSamples > 0) {
+        float rms = sqrtf(totalSquared / totalSamples);
+        // Scale to 0-100 range (typical audio is in -1.0 to 1.0 range)
+        float level = rms * 200; // Scale up for visibility
+        level = fminf(100, fmaxf(0, level));
+        g_currentAudioLevel = level;
+        
+        dispatch_async(dispatch_get_main_queue(), ^{
+            updateAudioLevel(level);
+        });
+    }
+}
+
 static float getAudioLevel(void) {
     return g_currentAudioLevel;
 }
@@ -165,6 +247,7 @@ static __weak YTMainAppVideoPlayerOverlayViewController *g_overlayController = n
 @property (nonatomic, assign) int samplesUnderThreshold;
 @property (nonatomic, strong) NSMutableArray *previousSamples;
 @property (nonatomic, weak) AVPlayer *currentPlayer;
+@property (nonatomic, strong) AVPlayerItem *currentPlayerItem;
 @property (nonatomic, strong) NSTimer *analysisTimer;
 @property (nonatomic, assign) float currentVolume;
 @property (nonatomic, assign) NSTimeInterval totalTimeSaved;
@@ -175,6 +258,7 @@ static __weak YTMainAppVideoPlayerOverlayViewController *g_overlayController = n
 @property (nonatomic, assign) float peakLevel;
 @property (nonatomic, assign) float averageLevel;
 @property (nonatomic, assign) BOOL screenRecordingRequested;
+@property (nonatomic, assign) AudioDetectionMethod audioDetectionMethod;
 
 + (instancetype)sharedManager;
 - (void)toggle;
@@ -186,8 +270,17 @@ static __weak YTMainAppVideoPlayerOverlayViewController *g_overlayController = n
 - (NSString *)formattedTimeSaved:(NSTimeInterval)seconds;
 - (void)updateVideoID:(NSString *)videoID;
 - (void)setRate:(float)rate;
-- (void)startScreenRecording;
-- (void)stopScreenRecording;
+- (void)startAudioDetection;
+- (void)stopAudioDetection;
+- (void)startReplayKitDetection;
+- (void)stopReplayKitDetection;
+- (void)startAudioTapDetection;
+- (void)stopAudioTapDetection;
+- (void)startAVAudioEngineDetection;
+- (void)stopAVAudioEngineDetection;
+- (void)startAVPlayerDetection;
+- (void)stopAVPlayerDetection;
+- (void)cycleAudioDetectionMethod;
 
 @end
 
@@ -221,6 +314,7 @@ static __weak YTMainAppVideoPlayerOverlayViewController *g_overlayController = n
         _currentVideoTimeSaved = 0;
         _lastSpeedUpTime = 0;
         _screenRecordingRequested = NO;
+        _audioDetectionMethod = AudioDetectionMethodReplayKit; // Default
         [self loadSettings];
     }
     return self;
@@ -247,6 +341,9 @@ static __weak YTMainAppVideoPlayerOverlayViewController *g_overlayController = n
     if ([defaults objectForKey:LastVideoTimeSavedKey] != nil) {
         _lastVideoTimeSaved = [defaults doubleForKey:LastVideoTimeSavedKey];
     }
+    if ([defaults objectForKey:AudioDetectionMethodKey] != nil) {
+        _audioDetectionMethod = (AudioDetectionMethod)[defaults integerForKey:AudioDetectionMethodKey];
+    }
 }
 
 - (void)saveSettings {
@@ -257,6 +354,7 @@ static __weak YTMainAppVideoPlayerOverlayViewController *g_overlayController = n
     [defaults setBool:_isEnabled forKey:EnabledKey];
     [defaults setDouble:_totalTimeSaved forKey:TotalTimeSavedKey];
     [defaults setDouble:_lastVideoTimeSaved forKey:LastVideoTimeSavedKey];
+    [defaults setInteger:_audioDetectionMethod forKey:AudioDetectionMethodKey];
     [defaults synchronize];
 }
 
@@ -343,11 +441,62 @@ static __weak YTMainAppVideoPlayerOverlayViewController *g_overlayController = n
     _analysisTimer = nil;
     _isSpedUp = NO;
     _samplesUnderThreshold = 0;
-    [self stopScreenRecording];
+    [self stopAudioDetection];
 }
 
+// Central method to start audio detection based on selected method
+- (void)startAudioDetection {
+    // Stop any existing detection first
+    [self stopAudioDetection];
+    
+    NSLog(@"[YouSkipSilence] Starting audio detection with method: %@", getAudioMethodName(_audioDetectionMethod));
+    
+    switch (_audioDetectionMethod) {
+        case AudioDetectionMethodReplayKit:
+            [self startReplayKitDetection];
+            break;
+        case AudioDetectionMethodAudioTap:
+            [self startAudioTapDetection];
+            break;
+        case AudioDetectionMethodAVAudioEngine:
+            [self startAVAudioEngineDetection];
+            break;
+        case AudioDetectionMethodAVPlayer:
+            [self startAVPlayerDetection];
+            break;
+        case AudioDetectionMethodSimulated:
+            // Simulated detection - just generate random levels for testing
+            NSLog(@"[YouSkipSilence] Using simulated audio detection");
+            break;
+        default:
+            break;
+    }
+}
+
+- (void)stopAudioDetection {
+    [self stopReplayKitDetection];
+    [self stopAudioTapDetection];
+    [self stopAVAudioEngineDetection];
+    [self stopAVPlayerDetection];
+}
+
+// Cycle through audio detection methods (for testing)
+- (void)cycleAudioDetectionMethod {
+    [self stopAudioDetection];
+    _audioDetectionMethod = (_audioDetectionMethod + 1) % AudioDetectionMethodCount;
+    [self saveSettings];
+    
+    if (_isEnabled) {
+        [self startAudioDetection];
+    }
+    
+    NSLog(@"[YouSkipSilence] Switched to audio detection method: %@", getAudioMethodName(_audioDetectionMethod));
+}
+
+#pragma mark - ReplayKit Detection
+
 // Screen Recording for audio capture - This will request permission
-- (void)startScreenRecording {
+- (void)startReplayKitDetection {
     if (g_screenRecordingActive) return;
     
     RPScreenRecorder *recorder = [RPScreenRecorder sharedRecorder];
@@ -389,7 +538,7 @@ static __weak YTMainAppVideoPlayerOverlayViewController *g_overlayController = n
     }
 }
 
-- (void)stopScreenRecording {
+- (void)stopReplayKitDetection {
     if (!g_screenRecordingActive) return;
     
     RPScreenRecorder *recorder = [RPScreenRecorder sharedRecorder];
@@ -402,6 +551,181 @@ static __weak YTMainAppVideoPlayerOverlayViewController *g_overlayController = n
             g_screenRecorder = nil;
         }];
     }
+}
+
+#pragma mark - MTAudioProcessingTap Detection
+
+- (void)startAudioTapDetection {
+    if (g_audioTapActive || !_currentPlayer) return;
+    
+    AVPlayerItem *playerItem = _currentPlayer.currentItem;
+    if (!playerItem) {
+        NSLog(@"[YouSkipSilence] No player item for audio tap");
+        return;
+    }
+    
+    // Store reference for cleanup
+    _currentPlayerItem = playerItem;
+    
+    // Wait for tracks to load (HLS streams load asynchronously)
+    [playerItem.asset loadValuesAsynchronouslyForKeys:@[@"tracks"] completionHandler:^{
+        NSError *error = nil;
+        AVKeyValueStatus status = [playerItem.asset statusOfValueForKey:@"tracks" error:&error];
+        
+        if (status != AVKeyValueStatusLoaded) {
+            NSLog(@"[YouSkipSilence] Failed to load tracks: %@", error);
+            return;
+        }
+        
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [self setupAudioTapForPlayerItem:playerItem];
+        });
+    }];
+}
+
+- (void)setupAudioTapForPlayerItem:(AVPlayerItem *)playerItem {
+    // Find audio track
+    NSArray *audioTracks = [playerItem.asset tracksWithMediaType:AVMediaTypeAudio];
+    if (audioTracks.count == 0) {
+        NSLog(@"[YouSkipSilence] No audio tracks found");
+        return;
+    }
+    
+    // Find audio mix input parameters for this track
+    AVAssetTrack *audioTrack = audioTracks.firstObject;
+    
+    // Create processing tap callbacks
+    MTAudioProcessingTapCallbacks callbacks;
+    callbacks.version = kMTAudioProcessingTapCallbacksVersion_0;
+    callbacks.clientInfo = (__bridge void *)self;
+    callbacks.init = tapInitCallback;
+    callbacks.finalize = tapFinalizeCallback;
+    callbacks.prepare = tapPrepareCallback;
+    callbacks.unprepare = tapUnprepareCallback;
+    callbacks.process = tapProcessCallback;
+    
+    // Create the tap
+    MTAudioProcessingTapRef tap;
+    OSStatus status = MTAudioProcessingTapCreate(kCFAllocatorDefault, &callbacks, kMTAudioProcessingTapCreationFlag_PreEffects, &tap);
+    
+    if (status != noErr) {
+        NSLog(@"[YouSkipSilence] Failed to create audio tap: %d", (int)status);
+        return;
+    }
+    
+    g_audioTap = tap;
+    
+    // Create audio mix with the tap
+    AVMutableAudioMixInputParameters *inputParams = [AVMutableAudioMixInputParameters audioMixInputParametersWithTrack:audioTrack];
+    inputParams.audioTapProcessor = tap;
+    
+    AVMutableAudioMix *audioMix = [AVMutableAudioMix audioMix];
+    audioMix.inputParameters = @[inputParams];
+    
+    // Apply to player item
+    playerItem.audioMix = audioMix;
+    g_audioTapActive = YES;
+    
+    NSLog(@"[YouSkipSilence] Audio tap set up successfully");
+}
+
+- (void)stopAudioTapDetection {
+    if (!g_audioTapActive) return;
+    
+    // Remove audio mix from player item
+    if (_currentPlayerItem) {
+        _currentPlayerItem.audioMix = nil;
+        _currentPlayerItem = nil;
+    }
+    
+    // Release tap
+    if (g_audioTap) {
+        CFRelease(g_audioTap);
+        g_audioTap = NULL;
+    }
+    
+    g_audioTapActive = NO;
+    NSLog(@"[YouSkipSilence] Audio tap stopped");
+}
+
+#pragma mark - AVAudioEngine Detection
+
+- (void)startAVAudioEngineDetection {
+    if (g_audioEngineActive) return;
+    
+    // Create audio engine
+    g_audioEngine = [[AVAudioEngine alloc] init];
+    
+    // Get the input node and install a tap
+    AVAudioInputNode *inputNode = [g_audioEngine inputNode];
+    AVAudioFormat *format = [inputNode outputFormatForBus:0];
+    
+    // Install tap on the input node to monitor audio levels
+    [inputNode installTapOnBus:0 bufferSize:1024 format:format block:^(AVAudioPCMBuffer *buffer, AVAudioTime *when) {
+        float *channelData = buffer.floatChannelData[0];
+        UInt32 frameLength = buffer.frameLength;
+        
+        float totalSquared = 0;
+        for (UInt32 i = 0; i < frameLength; i++) {
+            totalSquared += channelData[i] * channelData[i];
+        }
+        
+        float rms = sqrtf(totalSquared / frameLength);
+        float level = rms * 200; // Scale up for visibility
+        level = fminf(100, fmaxf(0, level));
+        
+        g_currentAudioLevel = level;
+        
+        dispatch_async(dispatch_get_main_queue(), ^{
+            updateAudioLevel(level);
+        });
+    }];
+    
+    // Start the engine
+    NSError *error = nil;
+    [g_audioEngine startAndReturnError:&error];
+    
+    if (error) {
+        NSLog(@"[YouSkipSilence] Failed to start AVAudioEngine: %@", error);
+        g_audioEngine = nil;
+        return;
+    }
+    
+    g_audioEngineActive = YES;
+    NSLog(@"[YouSkipSilence] AVAudioEngine started");
+}
+
+- (void)stopAVAudioEngineDetection {
+    if (!g_audioEngineActive || !g_audioEngine) return;
+    
+    // Remove tap and stop engine
+    AVAudioInputNode *inputNode = [g_audioEngine inputNode];
+    [inputNode removeTapOnBus:0];
+    
+    [g_audioEngine stop];
+    g_audioEngine = nil;
+    g_audioEngineActive = NO;
+    
+    NSLog(@"[YouSkipSilence] AVAudioEngine stopped");
+}
+
+#pragma mark - AVPlayer Volume Detection
+
+- (void)startAVPlayerDetection {
+    // This method tries to get volume information from AVPlayer's audio output
+    // It's less reliable but doesn't require special permissions
+    if (!_currentPlayer) {
+        NSLog(@"[YouSkipSilence] No player for AVPlayer volume detection");
+        return;
+    }
+    
+    NSLog(@"[YouSkipSilence] Starting AVPlayer volume detection");
+    // The actual detection happens in the analysis timer
+}
+
+- (void)stopAVPlayerDetection {
+    NSLog(@"[YouSkipSilence] Stopping AVPlayer volume detection");
+    // Nothing specific to clean up
 }
 
 // RPScreenRecorderDelegate methods
@@ -421,8 +745,8 @@ static __weak YTMainAppVideoPlayerOverlayViewController *g_overlayController = n
         [_analysisTimer invalidate];
     }
     
-    // Start screen recording for audio capture
-    [self startScreenRecording];
+    // Start audio detection with selected method
+    [self startAudioDetection];
     
     // Start periodic analysis using a timer
     // This is a simplified approach that analyzes playback periodically
@@ -438,8 +762,38 @@ static __weak YTMainAppVideoPlayerOverlayViewController *g_overlayController = n
         return;
     }
     
-    // Get the current volume from the screen recording audio meter
-    float volume = getAudioLevel();
+    // Get the current volume based on detection method
+    float volume;
+    
+    if (_audioDetectionMethod == AudioDetectionMethodSimulated) {
+        // Generate simulated audio level for testing (random walk)
+        static float simulatedLevel = 50.0f;
+        float change = (arc4random_uniform(20) - 10) / 10.0f; // -1 to +1
+        simulatedLevel += change;
+        simulatedLevel = fminf(100, fmaxf(0, simulatedLevel));
+        
+        // Occasionally simulate silence
+        if (arc4random_uniform(100) < 10) {
+            simulatedLevel = arc4random_uniform(20); // Low level
+        }
+        
+        volume = simulatedLevel;
+        g_currentAudioLevel = volume;
+    } else if (_audioDetectionMethod == AudioDetectionMethodAVPlayer && _currentPlayer) {
+        // Try to get volume from AVPlayer's current item
+        // This is an approximation based on rate and play state
+        if (_currentPlayer.rate > 0) {
+            // Video is playing, estimate volume (not actual audio level)
+            volume = 60.0f; // Default to "audio present" level
+        } else {
+            volume = 0.0f; // Not playing
+        }
+        g_currentAudioLevel = volume;
+    } else {
+        // Use global audio level set by other detection methods
+        volume = getAudioLevel();
+    }
+    
     _currentVolume = volume;
     
     // Update dynamic threshold if enabled
@@ -631,6 +985,8 @@ static UIImage *skipSilenceImage(NSString *qualityLabel, BOOL enabled) {
 @property (nonatomic, strong) UILabel *thresholdLabel;
 @property (nonatomic, strong) UISwitch *dynamicThresholdSwitch;
 @property (nonatomic, strong) NSTimer *visualizerTimer;
+@property (nonatomic, strong) UIButton *audioMethodButton;
+@property (nonatomic, strong) UILabel *audioMethodLabel;
 @end
 
 @implementation YouSkipSilenceSettingsViewController
@@ -775,6 +1131,33 @@ static UIImage *skipSilenceImage(NSString *qualityLabel, BOOL enabled) {
     self.dynamicThresholdSwitch.translatesAutoresizingMaskIntoConstraints = NO;
     [containerView addSubview:self.dynamicThresholdSwitch];
     
+    // Audio Detection Method Section
+    UILabel *audioMethodTitleLabel = [[UILabel alloc] init];
+    audioMethodTitleLabel.text = @"Audio Detection Method";
+    audioMethodTitleLabel.font = [UIFont systemFontOfSize:14];
+    audioMethodTitleLabel.textColor = [UIColor lightGrayColor];
+    audioMethodTitleLabel.translatesAutoresizingMaskIntoConstraints = NO;
+    [containerView addSubview:audioMethodTitleLabel];
+    
+    self.audioMethodLabel = [[UILabel alloc] init];
+    self.audioMethodLabel.text = getAudioMethodName(manager.audioDetectionMethod);
+    self.audioMethodLabel.font = [UIFont systemFontOfSize:12];
+    self.audioMethodLabel.textColor = [UIColor systemBlueColor];
+    self.audioMethodLabel.numberOfLines = 2;
+    self.audioMethodLabel.textAlignment = NSTextAlignmentRight;
+    self.audioMethodLabel.translatesAutoresizingMaskIntoConstraints = NO;
+    [containerView addSubview:self.audioMethodLabel];
+    
+    self.audioMethodButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    [self.audioMethodButton setTitle:@"Change Method" forState:UIControlStateNormal];
+    self.audioMethodButton.titleLabel.font = [UIFont systemFontOfSize:12];
+    [self.audioMethodButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    self.audioMethodButton.backgroundColor = [UIColor systemBlueColor];
+    self.audioMethodButton.layer.cornerRadius = 6;
+    [self.audioMethodButton addTarget:self action:@selector(cycleAudioMethod) forControlEvents:UIControlEventTouchUpInside];
+    self.audioMethodButton.translatesAutoresizingMaskIntoConstraints = NO;
+    [containerView addSubview:self.audioMethodButton];
+    
     // Layout constraints
     [NSLayoutConstraint activateConstraints:@[
         // Container
@@ -844,10 +1227,24 @@ static UIImage *skipSilenceImage(NSString *qualityLabel, BOOL enabled) {
         // Dynamic Threshold
         [dynamicLabel.topAnchor constraintEqualToAnchor:self.thresholdSlider.bottomAnchor constant:20],
         [dynamicLabel.leadingAnchor constraintEqualToAnchor:containerView.leadingAnchor constant:16],
-        [dynamicLabel.bottomAnchor constraintEqualToAnchor:containerView.bottomAnchor constant:-20],
         
         [self.dynamicThresholdSwitch.centerYAnchor constraintEqualToAnchor:dynamicLabel.centerYAnchor],
         [self.dynamicThresholdSwitch.trailingAnchor constraintEqualToAnchor:containerView.trailingAnchor constant:-16],
+        
+        // Audio Detection Method
+        [audioMethodTitleLabel.topAnchor constraintEqualToAnchor:dynamicLabel.bottomAnchor constant:20],
+        [audioMethodTitleLabel.leadingAnchor constraintEqualToAnchor:containerView.leadingAnchor constant:16],
+        
+        [self.audioMethodLabel.topAnchor constraintEqualToAnchor:audioMethodTitleLabel.bottomAnchor constant:4],
+        [self.audioMethodLabel.leadingAnchor constraintEqualToAnchor:containerView.leadingAnchor constant:16],
+        [self.audioMethodLabel.trailingAnchor constraintEqualToAnchor:self.audioMethodButton.leadingAnchor constant:-8],
+        
+        [self.audioMethodButton.centerYAnchor constraintEqualToAnchor:self.audioMethodLabel.centerYAnchor],
+        [self.audioMethodButton.trailingAnchor constraintEqualToAnchor:containerView.trailingAnchor constant:-16],
+        [self.audioMethodButton.widthAnchor constraintEqualToConstant:100],
+        [self.audioMethodButton.heightAnchor constraintEqualToConstant:28],
+        
+        [self.audioMethodLabel.bottomAnchor constraintEqualToAnchor:containerView.bottomAnchor constant:-20],
     ]];
     
     // Start visualizer timer
@@ -948,6 +1345,20 @@ static UIImage *skipSilenceImage(NSString *qualityLabel, BOOL enabled) {
     // Enable/disable threshold slider based on dynamic threshold state
     self.thresholdSlider.enabled = !switchControl.on;
     self.thresholdSlider.alpha = switchControl.on ? 0.5 : 1.0;
+}
+
+- (void)cycleAudioMethod {
+    YouSkipSilenceManager *manager = [YouSkipSilenceManager sharedManager];
+    [manager cycleAudioDetectionMethod];
+    
+    // Update the label to show new method
+    self.audioMethodLabel.text = getAudioMethodName(manager.audioDetectionMethod);
+    
+    // Show a HUD message about the change
+    NSString *methodName = getAudioMethodName(manager.audioDetectionMethod);
+    NSString *message = [NSString stringWithFormat:@"Audio: %@", methodName];
+    [[%c(GOOHUDManagerInternal) sharedInstance]
+        showMessageMainThread:[%c(YTHUDMessage) messageWithText:message]];
 }
 
 - (void)dismissSettings {
