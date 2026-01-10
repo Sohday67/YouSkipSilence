@@ -85,6 +85,65 @@ static const int kSamplesThreshold = 10;
 @class YouSkipSilenceManager;
 static void updateAudioLevel(float level);
 
+// Audio metering using AVAudioRecorder for system-level audio detection
+static AVAudioRecorder *g_audioRecorder = nil;
+
+static void setupAudioMeter(void) {
+    if (g_audioRecorder) return;
+    
+    // Configure audio session for metering
+    AVAudioSession *session = [AVAudioSession sharedInstance];
+    NSError *error = nil;
+    [session setCategory:AVAudioSessionCategoryPlayAndRecord 
+             withOptions:AVAudioSessionCategoryOptionDefaultToSpeaker | AVAudioSessionCategoryOptionMixWithOthers
+                   error:&error];
+    [session setActive:YES error:&error];
+    
+    // Create a temporary file for the recorder (it won't actually record)
+    NSString *tempPath = [NSTemporaryDirectory() stringByAppendingPathComponent:@"youskipsilence_meter.caf"];
+    NSURL *tempURL = [NSURL fileURLWithPath:tempPath];
+    
+    // Audio settings for metering
+    NSDictionary *settings = @{
+        AVFormatIDKey: @(kAudioFormatAppleLossless),
+        AVSampleRateKey: @44100.0,
+        AVNumberOfChannelsKey: @1,
+        AVEncoderAudioQualityKey: @(AVAudioQualityMin)
+    };
+    
+    g_audioRecorder = [[AVAudioRecorder alloc] initWithURL:tempURL settings:settings error:&error];
+    if (g_audioRecorder) {
+        g_audioRecorder.meteringEnabled = YES;
+        [g_audioRecorder prepareToRecord];
+        [g_audioRecorder record];
+    }
+}
+
+static void stopAudioMeter(void) {
+    if (g_audioRecorder) {
+        [g_audioRecorder stop];
+        g_audioRecorder = nil;
+    }
+}
+
+static float getAudioLevel(void) {
+    if (!g_audioRecorder) return 50.0f;
+    
+    [g_audioRecorder updateMeters];
+    
+    // Get average power (in dB, typically -160 to 0)
+    float averagePower = [g_audioRecorder averagePowerForChannel:0];
+    
+    // Convert dB to linear scale (0-100)
+    // -160 dB is silence, 0 dB is maximum
+    // Typical speech is around -20 to -10 dB
+    float level = (averagePower + 80) * 1.25; // Map -80dB to 0, 0dB to 100
+    level = fmaxf(0, fminf(100, level));
+    
+    return level;
+}
+
+// MTAudioProcessingTap callbacks (fallback for non-DRM content)
 static void tapInit(MTAudioProcessingTapRef tap, void *clientInfo, void **tapStorageOut) {
     *tapStorageOut = clientInfo;
 }
@@ -277,7 +336,6 @@ static MLHAMQueuePlayer *g_queuePlayer = nil;
     
     if (_isEnabled) {
         [self startAnalysis];
-        [self setupAudioTap];
     }
 }
 
@@ -286,6 +344,7 @@ static MLHAMQueuePlayer *g_queuePlayer = nil;
     _analysisTimer = nil;
     _isSpedUp = NO;
     _samplesUnderThreshold = 0;
+    stopAudioMeter();
     [self removeAudioTap];
 }
 
@@ -344,6 +403,9 @@ static MLHAMQueuePlayer *g_queuePlayer = nil;
         [_analysisTimer invalidate];
     }
     
+    // Start audio metering for level detection
+    setupAudioMeter();
+    
     // Start periodic analysis using a timer
     // This is a simplified approach that analyzes playback periodically
     _analysisTimer = [NSTimer scheduledTimerWithTimeInterval:0.025 // 25ms intervals, similar to skip-silence
@@ -354,12 +416,12 @@ static MLHAMQueuePlayer *g_queuePlayer = nil;
 }
 
 - (void)analyzeCurrentSample {
-    if (!_isEnabled || !_currentPlayer || !_currentPlayer.currentItem) {
+    if (!_isEnabled) {
         return;
     }
     
-    // Get the current volume from the audio
-    float volume = [self calculateCurrentVolume];
+    // Get the current volume from the audio meter
+    float volume = getAudioLevel();
     _currentVolume = volume;
     
     // Update dynamic threshold if enabled
