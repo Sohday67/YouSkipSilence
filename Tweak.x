@@ -41,12 +41,6 @@ static const int kSamplesThreshold = 10;
 // Forward declarations
 @class YouSkipSilenceManager;
 
-// Protocol for varispeed delegate
-@protocol YTVarispeedSwitchControllerDelegate <NSObject>
-@optional
-- (void)varispeedSwitchController:(id)controller didSelectRate:(float)rate;
-@end
-
 // MLHAMQueuePlayer method declarations for rate control
 @interface MLHAMQueuePlayer (YouSkipSilence)
 - (void)setRate:(float)rate;
@@ -68,7 +62,7 @@ static const int kSamplesThreshold = 10;
 - (MLPlayerItem *)playerItem;
 @end
 
-@interface YTMainAppVideoPlayerOverlayViewController (YouSkipSilence) <YTVarispeedSwitchControllerDelegate>
+@interface YTMainAppVideoPlayerOverlayViewController (YouSkipSilence)
 @property (nonatomic, assign) YTPlayerViewController *parentViewController;
 @property (nonatomic, weak) id delegate;
 @end
