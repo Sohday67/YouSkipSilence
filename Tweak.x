@@ -27,8 +27,7 @@
 #import <YTVideoOverlay/Init.x>
 
 // Forward declaration for YTPlayerOverlayManager
-@interface YTPlayerOverlayManager : NSObject <YTVarispeedSwitchControllerDelegate>
-@end
+@class YTPlayerOverlayManager;
 
 #define TweakKey @"YouSkipSilence"
 #define DynamicThresholdKey @"YouSkipSilence-DynamicThreshold"
