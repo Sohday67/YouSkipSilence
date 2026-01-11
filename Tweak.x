@@ -359,54 +359,55 @@ static __weak YTMainAppVideoPlayerOverlayViewController *g_overlayController = n
 }
 
 - (void)setRate:(float)rate {
-    // APPROACH 1: Use performSelector with the player's setPlaybackRate: method directly
-    // This is similar to how YouSpeed actually changes the rate
-    if (_currentPlayer) {
-        // Try setting rate directly on AVPlayer (this is what actually controls playback)
-        [_currentPlayer setRate:rate];
-    }
+    NSLog(@"[YouSkipSilence] setRate called with rate: %f", rate);
     
-    // APPROACH 2: Also try through MLHAMQueuePlayer which wraps AVPlayer
-    if (g_queuePlayer) {
-        @try {
-            // Set the internal rate value
-            [g_queuePlayer setValue:@(rate) forKey:@"_rate"];
-            // Call internal method to apply it
-            if ([g_queuePlayer respondsToSelector:@selector(internalSetRate)]) {
-                [g_queuePlayer internalSetRate];
-            }
-        } @catch (NSException *e) {
-            // Fallback: try setting rate directly
-            @try {
-                // Some versions have setRate: as a method
-                #pragma clang diagnostic push
-                #pragma clang diagnostic ignored "-Warc-performSelector-leaks"
-                SEL setRateSel = NSSelectorFromString(@"setRate:");
-                if ([g_queuePlayer respondsToSelector:setRateSel]) {
-                    NSMethodSignature *sig = [g_queuePlayer methodSignatureForSelector:setRateSel];
-                    NSInvocation *inv = [NSInvocation invocationWithMethodSignature:sig];
-                    [inv setSelector:setRateSel];
-                    [inv setTarget:g_queuePlayer];
-                    [inv setArgument:&rate atIndex:2];
-                    [inv invoke];
-                }
-                #pragma clang diagnostic pop
-            } @catch (NSException *e2) {
-                // Ignore
-            }
-        }
-    }
-    
-    // APPROACH 3: Try the overlay controller's delegate method as a last resort
+    // PRIMARY APPROACH: Use the youSkipSilenceSetRate: method on the overlay controller
+    // This is exactly how YouSpeed does it - calling the delegate's varispeedSwitchController:didSelectRate:
+    // from within the controller's context where self.delegate properly resolves
     if (g_overlayController) {
         @try {
-            id delegate = [g_overlayController valueForKey:@"delegate"];
-            if (delegate && [delegate respondsToSelector:@selector(varispeedSwitchController:didSelectRate:)]) {
-                [(id <YTVarispeedSwitchControllerDelegate>)delegate varispeedSwitchController:nil didSelectRate:rate];
+            // Call our custom method which mirrors YouSpeed's didChangePlaybackSpeed:
+            // This method is added via %hook and calls self.delegate from within the controller
+            SEL setRateSel = NSSelectorFromString(@"youSkipSilenceSetRate:");
+            if ([g_overlayController respondsToSelector:setRateSel]) {
+                NSMethodSignature *sig = [g_overlayController methodSignatureForSelector:setRateSel];
+                NSInvocation *inv = [NSInvocation invocationWithMethodSignature:sig];
+                [inv setSelector:setRateSel];
+                [inv setTarget:g_overlayController];
+                [inv setArgument:&rate atIndex:2];
+                [inv invoke];
+                NSLog(@"[YouSkipSilence] Called youSkipSilenceSetRate: on overlay controller");
+                return; // Success, no need to try other methods
             }
         } @catch (NSException *e) {
-            // Ignore
+            NSLog(@"[YouSkipSilence] youSkipSilenceSetRate: failed: %@", e);
         }
+    }
+    
+    // FALLBACK 1: Try MLHAMQueuePlayer setRate: method (this is what YouSpeed hooks)
+    if (g_queuePlayer) {
+        @try {
+            // This triggers our hooked setRate: method on MLHAMQueuePlayer
+            SEL setRateSel = NSSelectorFromString(@"setRate:");
+            if ([g_queuePlayer respondsToSelector:setRateSel]) {
+                NSMethodSignature *sig = [g_queuePlayer methodSignatureForSelector:setRateSel];
+                NSInvocation *inv = [NSInvocation invocationWithMethodSignature:sig];
+                [inv setSelector:setRateSel];
+                [inv setTarget:g_queuePlayer];
+                [inv setArgument:&rate atIndex:2];
+                [inv invoke];
+                NSLog(@"[YouSkipSilence] Called setRate: on MLHAMQueuePlayer");
+                return;
+            }
+        } @catch (NSException *e) {
+            NSLog(@"[YouSkipSilence] MLHAMQueuePlayer setRate: failed: %@", e);
+        }
+    }
+    
+    // FALLBACK 2: Try AVPlayer directly (last resort, may not sync with YouTube UI)
+    if (_currentPlayer) {
+        NSLog(@"[YouSkipSilence] Using AVPlayer setRate as last resort");
+        [_currentPlayer setRate:rate];
     }
 }
 
@@ -1405,9 +1406,14 @@ static void showSettingsPopup(UIViewController *presenter) {
 %new(v@:f)
 - (void)youSkipSilenceSetRate:(float)rate {
     // This is exactly how YouSpeed's didChangePlaybackSpeed: works
+    NSLog(@"[YouSkipSilence] youSkipSilenceSetRate called with rate: %f", rate);
     id delegate = self.delegate;
+    NSLog(@"[YouSkipSilence] delegate: %@, responds: %d", delegate, [delegate respondsToSelector:@selector(varispeedSwitchController:didSelectRate:)]);
     if (delegate && [delegate respondsToSelector:@selector(varispeedSwitchController:didSelectRate:)]) {
         [(id <YTVarispeedSwitchControllerDelegate>)delegate varispeedSwitchController:nil didSelectRate:rate];
+        NSLog(@"[YouSkipSilence] Successfully called delegate's varispeedSwitchController:didSelectRate:");
+    } else {
+        NSLog(@"[YouSkipSilence] delegate doesn't respond to varispeedSwitchController:didSelectRate:");
     }
 }
 
